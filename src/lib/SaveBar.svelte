@@ -11,6 +11,7 @@
 
   // この部品を使う側（編集ページ）から受け取る値
   // keyId         ：楽譜の調の id
+  // clefId        ：楽譜の音部記号の id（ビオラ版）
   // tempo         ：楽譜のテンポ
   // temperamentId ：音律の id
   // notes         ：音の並び（音のデータの配列）
@@ -18,7 +19,7 @@
   // name          ：今開いている楽譜の名前。まだ保存していないときは空の文字
   // onsaved       ：新しく保存できたときに呼ぶ関数。保存した楽譜の id と名前を渡す
   // onnew         ：「新規」を押して、新しい楽譜を作ることになったときに呼ぶ関数
-  let { keyId, tempo, temperamentId, notes, savedId, name, onsaved, onnew } = $props();
+  let { keyId, clefId, tempo, temperamentId, notes, savedId, name, onsaved, onnew } = $props();
 
   // ===== 設定値 =====
 
@@ -48,7 +49,7 @@
   let saveCount = $state(0);
 
   // 保存していない変更があるかどうか（true：ある）
-  // $derived.by の中で使っている値（調・テンポ・音律・音の並び・saveCount など）が変わるたびに、自動で調べ直される
+  // $derived.by の中で使っている値（調・音部記号・テンポ・音律・音の並び・saveCount など）が変わるたびに、自動で調べ直される
   let isUnsaved = $derived.by(() => {
     // saveCount を読んでおくことで、保存した直後にも調べ直されるようにする（値そのものは使わない）
     saveCount;
@@ -56,6 +57,7 @@
     return hasUnsavedChanges({
       savedId: savedId,
       keyId: keyId,
+      clefId: clefId,
       tempo: tempo,
       temperamentId: temperamentId,
       notes: notes,
@@ -118,11 +120,12 @@
 
   /**
    * 今の楽譜の内容を、保存用のデータにまとめる関数
-   * @returns {{keyId: string, tempo: number, temperamentId: string, notes: Array}} 保存する内容
+   * @returns {{keyId: string, clefId: string, tempo: number, temperamentId: string, notes: Array}} 保存する内容
    */
   function getScoreData() {
     return {
       keyId: keyId,
+      clefId: clefId,
       tempo: tempo,
       temperamentId: temperamentId,
       // $state.snapshot は、画面と連動している配列から、ふつうの配列のコピーを作る

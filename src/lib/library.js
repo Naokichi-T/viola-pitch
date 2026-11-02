@@ -1,6 +1,9 @@
 // 名前を付けて保存した楽譜の一覧を、ブラウザに保存したり読み込んだりするファイル
 // 「作業中の楽譜」（settings.js）とは別に、いくつでも保存しておける。
 
+// id から音部記号のデータを探す関数を読み込む（音部記号が入っていない古い楽譜を、アルト記号として扱うため）（ビオラ版）
+import { getClef } from "./staff.js";
+
 // ===== ブラウザに保存するための設定値 =====
 
 // 保存した楽譜の一覧を保存するときの名前（localStorage の中で、この名前を付けて保存する）
@@ -10,8 +13,8 @@ const SAVED_SCORES_STORAGE_KEY = "viola-pitch:saved-scores";
  * 保存した楽譜の一覧を、ブラウザから読み込む関数
  * ブラウザの中でだけ使える機能なので、ページが画面に表示された後に呼ぶこと。
  * @returns {Array} 保存した楽譜の配列。1つも保存されていないときや、読み込めないときは空の配列
- *   1つの楽譜は { id, name, keyId, tempo, temperamentId, notes, savedAt } の形
- *   id：楽譜を区別するための文字、name：名前、keyId：調の id、tempo：テンポ、
+ *   1つの楽譜は { id, name, keyId, clefId, tempo, temperamentId, notes, savedAt } の形
+ *   id：楽譜を区別するための文字、name：名前、keyId：調の id、clefId：音部記号の id（ビオラ版）、tempo：テンポ、
  *   temperamentId：音律の id、notes：音のデータの配列、savedAt：保存した日時（ミリ秒の数字）
  */
 export function loadSavedScores() {
@@ -78,7 +81,7 @@ export function isNameUsed(name, exceptId) {
 
 /**
  * 楽譜を、新しく保存する関数
- * @param {{name: string, keyId: string, tempo: number, temperamentId: string, notes: Array}} data - 保存する内容
+ * @param {{name: string, keyId: string, clefId: string, tempo: number, temperamentId: string, notes: Array}} data - 保存する内容
  * @returns {object|null} 保存した楽譜（id と保存した日時が付いたもの）。保存できなかったときは null
  */
 export function addSavedScore(data) {
@@ -90,6 +93,7 @@ export function addSavedScore(data) {
     id: createId(),
     name: data.name,
     keyId: data.keyId,
+    clefId: data.clefId,
     tempo: data.tempo,
     temperamentId: data.temperamentId,
     notes: data.notes,
@@ -107,9 +111,9 @@ export function addSavedScore(data) {
 
 /**
  * 保存してある楽譜を、新しい内容で上書きする関数
- * 名前はそのままで、調・テンポ・音律・音の並び・保存した日時を入れ替える。
+ * 名前はそのままで、調・音部記号・テンポ・音律・音の並び・保存した日時を入れ替える。
  * @param {string} id - 上書きする楽譜の id
- * @param {{keyId: string, tempo: number, temperamentId: string, notes: Array}} data - 新しい内容
+ * @param {{keyId: string, clefId: string, tempo: number, temperamentId: string, notes: Array}} data - 新しい内容
  * @returns {object|null} 上書きした後の楽譜。その id の楽譜がないときや、保存できなかったときは null
  */
 export function updateSavedScore(id, data) {
@@ -123,7 +127,7 @@ export function updateSavedScore(id, data) {
   }
 
   // 調か音の並びが変わるときは、最高点を消す（別の内容になるので、前の点数とは比べられないため）
-  // テンポや音律だけが変わるときは、最高点を残す
+  // テンポや音律や音部記号だけが変わるときは、最高点を残す（音部記号は見た目だけで、弾く音は同じため）
   const isSameMusic = score.keyId === data.keyId && JSON.stringify(score.notes) === JSON.stringify(data.notes);
   if (!isSameMusic) {
     // delete は、データの中から、その項目そのものを取り除く命令
@@ -132,6 +136,7 @@ export function updateSavedScore(id, data) {
 
   // 内容を入れ替える（id と名前はそのまま）
   score.keyId = data.keyId;
+  score.clefId = data.clefId;
   score.tempo = data.tempo;
   score.temperamentId = data.temperamentId;
   score.notes = data.notes;
@@ -168,13 +173,15 @@ export function deleteSavedScore(id) {
 
 /**
  * 楽譜の内容のうち、比べるのに使う部分だけを取り出して、文字にする関数（このファイルの中だけで使う）
- * 調・テンポ・音律・音の並びを、決まった順番で並べた文字にするので、2つの楽譜を文字どうしで比べられる。
- * @param {{keyId: string, tempo: number, temperamentId: string, notes: Array}} score - 楽譜の内容
+ * 調・音部記号・テンポ・音律・音の並びを、決まった順番で並べた文字にするので、2つの楽譜を文字どうしで比べられる。
+ * @param {{keyId: string, clefId: string, tempo: number, temperamentId: string, notes: Array}} score - 楽譜の内容
  * @returns {string} 比べるための文字
  */
 function toComparableText(score) {
   return JSON.stringify({
     keyId: score.keyId,
+    // 音部記号（入っていない古い楽譜は、アルト記号として比べる）（ビオラ版）
+    clefId: getClef(score.clefId).id,
     tempo: score.tempo,
     temperamentId: score.temperamentId,
     // 音は、必要な3つの値だけを決まった順番で取り出す
@@ -185,8 +192,8 @@ function toComparableText(score) {
 /**
  * 作業中の楽譜に、保存していない変更があるかどうかを調べる関数
  * - まだ名前を付けて保存していない楽譜：音が1つでもあれば「変更あり」
- * - 保存した楽譜を開いている：保存してある内容と、調・テンポ・音律・音の並びのどれかが違えば「変更あり」
- * @param {{savedId: string|null, keyId: string, tempo: number, temperamentId: string, notes: Array}} current - 作業中の楽譜
+ * - 保存した楽譜を開いている：保存してある内容と、調・音部記号・テンポ・音律・音の並びのどれかが違えば「変更あり」
+ * @param {{savedId: string|null, keyId: string, clefId: string, tempo: number, temperamentId: string, notes: Array}} current - 作業中の楽譜
  * @returns {boolean} 保存していない変更があれば true
  */
 export function hasUnsavedChanges(current) {

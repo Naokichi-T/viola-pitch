@@ -24,6 +24,9 @@
   // 五線譜を描く部品を読み込む（区間を選ぶときに、楽譜の全体を表示するために使う）
   import Staff from "#lib/Staff.svelte";
 
+  // 最初の音部記号と、id から音部記号を探す関数を読み込む（ビオラ版）
+  import { DEFAULT_CLEF_ID, getClef } from "#lib/staff.js";
+
   // 保存した楽譜を探す関数、保存していない変更があるかを調べる関数、最高点を記録する関数を読み込む
   import { getSavedScore, hasUnsavedChanges, recordBestScore } from "#lib/library.js";
 
@@ -48,6 +51,9 @@
 
   // 楽譜の調の id
   let keyId = $state(DEFAULT_KEY_ID);
+
+  // 楽譜の音部記号の id（編集ページで選んだもの）（ビオラ版）
+  let clefId = $state(DEFAULT_CLEF_ID);
 
   // 楽譜のテンポ（1分間の拍の数）。「通し」モードで使う
   let tempo = $state(60);
@@ -188,6 +194,9 @@
       // 調（一覧にない id が保存されていた場合は、getKey がハ長調にしてくれる）
       keyId = getKey(savedScore.keyId).id;
 
+      // 音部記号（入っていない古いデータのときは、アルト記号になる）（ビオラ版）
+      clefId = getClef(savedScore.clefId).id;
+
       // テンポ
       tempo = savedScore.tempo;
 
@@ -210,6 +219,7 @@
         isUnsaved = hasUnsavedChanges({
           savedId: savedId,
           keyId: savedScore.keyId,
+          clefId: savedScore.clefId,
           tempo: savedScore.tempo,
           temperamentId: temperamentId,
           notes: savedScore.notes,
@@ -349,7 +359,8 @@
     <!-- 楽譜の調と音律（編集ページで決めたものを表示するだけで、ここでは変えられない） -->
     <!-- 調と音律の表示と、指板の図へのリンクを横に並べる -->
     <div class="score-info-row">
-      <p class="score-info">{getKeyLabel(currentKey)}・{currentTemperament.name}</p>
+      <!-- （ビオラ版：音部記号の名前も表示する） -->
+      <p class="score-info">{getKeyLabel(currentKey)}・{getClef(clefId).name}・{currentTemperament.name}</p>
 
       <!-- 指板の図へのリンク。アドレスの最後に「?key=調の id」を付けて、楽譜の調を引き継ぐ -->
       <a class="fingerboard-link" href="/fingerboard?key={keyId}">指板で見る →</a>
@@ -447,7 +458,7 @@
         </p>
 
         <!-- 楽譜の全体。1回目にタップした音は、選択中の青い帯で表示する -->
-        <Staff {notes} signature={currentKey.signature} selectedIndex={pendingIndex} onselect={handleRangeTap} />
+        <Staff {notes} signature={currentKey.signature} {clefId} selectedIndex={pendingIndex} onselect={handleRangeTap} />
 
         <!-- 選ぶのをやめるボタン -->
         <button class="range-cancel-button" onclick={closeRangeSelector}>キャンセル</button>
@@ -460,7 +471,8 @@
       {#key rangeKey}
         {#if modeId === "step"}
           <!-- 「じっくり」モード：練習する音・調・音律・OK の範囲・開放弦を OK にするかどうか・くり返すかどうかを渡す -->
-          <StepPractice notes={practiceNotes} {currentKey} {temperamentId} {tolerance} {allowOpenString} {repeatEnabled} />
+          <!-- （ビオラ版：音部記号も渡す） -->
+          <StepPractice notes={practiceNotes} {currentKey} {temperamentId} {tolerance} {allowOpenString} {repeatEnabled} {clefId} />
         {:else}
           <!-- 「通し」モード：練習する音・調・最初のテンポ・音律・OK の範囲・開放弦を OK にするかどうか・くり返すかどうかを渡す -->
           <!-- ontempochange：「通し」の中でテンポを変えたら、このページの tempo も同じ値にする -->
@@ -468,6 +480,7 @@
           <RunPractice
             notes={practiceNotes}
             {currentKey}
+            {clefId}
             initialTempo={tempo}
             {temperamentId}
             {tolerance}

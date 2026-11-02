@@ -68,7 +68,9 @@
   //                    staffHeight … 五線譜の枠の高さの上限（CSS の書き方。例："412px"）（高さを測って合わせる手直し）
   //                                  練習を始めたあとは、下に並ぶものの高さを測って決めた値。始める前は STEP_STAFF_HEIGHT
   //                  null が初期値（渡されなかったとき）
-  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, graceFlags = [], staff = null } = $props();
+  // clefId         ：五線譜を描く音部記号の id（"alto"・"treble"・"tenor"）（ビオラ版）
+  //                  手で入れた楽譜の五線譜（下の Staff）で使う。渡されなかったときはアルト記号
+  let { notes, currentKey, temperamentId, tolerance, allowOpenString, repeatEnabled, graceFlags = [], staff = null, clefId = "alto" } = $props();
 
   // 今の目標が前打音かどうか（true：前打音）。目標の音の見出しに「前打音」と添えるのに使う（「じっくり」の前打音）
   let isGraceTarget = $derived(graceFlags[targetIndex] === true);
@@ -808,7 +810,7 @@
   <!-- 今までの五線譜は、高さに上限を付けた枠に入れる。音が多くて段が増えたら、枠の中でスクロールする（1画面に収める手直し） -->
   <!-- （高さを測って合わせる手直し：高さの上限は、測って決めた staffHeight にした） -->
   <div class="staff-box" bind:this={staffBox} style:max-height={staffHeight}>
-    <Staff {notes} signature={currentKey.signature} selectedIndex={targetIndex} {passed} onselect={setTarget} />
+    <Staff {notes} signature={currentKey.signature} {clefId} selectedIndex={targetIndex} {passed} onselect={setTarget} />
   </div>
 {/if}
 

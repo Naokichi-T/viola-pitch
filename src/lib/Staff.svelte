@@ -3,8 +3,9 @@
   import {
     STAFF_WIDTH,
     ROW_HEIGHT,
-    LINE_POSITIONS,
-    C_LINE_POSITION,
+    DEFAULT_CLEF_ID,
+    getClef,
+    getLinePositions,
     CLEF_X,
     NOTES_PER_ROW,
     STEM_WIDTH,
@@ -25,8 +26,16 @@
   // statuses      ：それぞれの音の判定の結果（notes と同じ順番で並ぶ配列）
   //                 "ok"（OK）・"high"（高い）・"low"（低い）・"none"（音なし）のどれか。まだ判定していない音は入っていない
   // onselect      ：音符がタップされたときに呼ぶ関数。何番目の音かを渡す
-  // selectedIndex・playingIndex・passed・statuses・onselect は、渡されなかったときのための初期値を決めておく
-  let { notes, signature, selectedIndex = null, playingIndex = null, passed = [], statuses = [], onselect = () => {} } = $props();
+  // clefId        ：音部記号の id（"alto"・"treble"・"tenor"）（ビオラ版で追加）
+  // selectedIndex・playingIndex・passed・statuses・onselect・clefId は、渡されなかったときのための初期値を決めておく
+  let { notes, signature, selectedIndex = null, playingIndex = null, passed = [], statuses = [], onselect = () => {}, clefId = DEFAULT_CLEF_ID } = $props();
+
+  // 音部記号のデータ（記号の文字と、置く線の位置を使う）
+  // $derived を付けると、clefId が変わるたびに自動で探し直される
+  let clef = $derived(getClef(clefId));
+
+  // 五線の5本の線の通し番号（音部記号によって違う）
+  let linePositions = $derived(getLinePositions(clefId));
 
   // 判定の結果の種類ごとの、段の下に表示する記号の形（OK は色だけで、記号は付けない）
   // 文字の「↑」は端末によって細かったり形が違ったりするので、線で描く。
@@ -52,7 +61,8 @@
 
   // 調号の記号それぞれの、文字と位置
   // 調号はどの段でも同じなので、段ごとではなくここで1回だけ計算する
-  let keySignatureSymbols = $derived(layoutKeySignature(signature));
+  // 音部記号によって調号の高さが変わるので、clefId も渡す
+  let keySignatureSymbols = $derived(layoutKeySignature(signature, clefId));
 
   /**
    * 音符の上でキーが押されたときの処理をする関数
@@ -76,17 +86,18 @@
   <!-- viewBox で「中の座標の範囲」を決めておくと、画面の幅に合わせて全体が拡大・縮小される -->
   <svg class="staff" viewBox="0 0 {STAFF_WIDTH} {ROW_HEIGHT}">
     <!-- 五線：5本の線を、通し番号から縦の位置を計算して引く -->
-    {#each LINE_POSITIONS as position (position)}
-      <line class="staff-line" x1="0" y1={positionToY(position)} x2={STAFF_WIDTH} y2={positionToY(position)} />
+    {#each linePositions as position (position)}
+      <line class="staff-line" x1="0" y1={positionToY(position, clefId)} x2={STAFF_WIDTH} y2={positionToY(position, clefId)} />
     {/each}
 
-    <!-- アルト記号（ハ音記号）：楽譜用フォントの文字として表示する -->
-    <!-- 文字の基準の位置（y）をドの線（真ん中の線）に合わせると、記号のくびれの真ん中がドの線に重なる -->
-    <text class="glyph" x={CLEF_X} y={positionToY(C_LINE_POSITION)} font-size={GLYPH_FONT_SIZE}>
-      {GLYPHS.cClef}
+    <!-- 音部記号（アルト記号・ト音記号・テノール記号）：楽譜用フォントの文字として表示する -->
+    <!-- 文字の基準の位置（y）を決まった線に合わせる -->
+    <!-- （ハ音記号はくびれの真ん中がド4の線に、ト音記号は渦の中心がソ4の線に重なる） -->
+    <text class="glyph" x={CLEF_X} y={positionToY(clef.glyphPosition, clefId)} font-size={GLYPH_FONT_SIZE}>
+      {clef.glyph}
     </text>
 
-    <!-- 調号：アルト記号の右に、♯か♭を決まった順番と高さで並べる -->
+    <!-- 調号：音部記号の右に、♯か♭を決まった順番と高さで並べる -->
     {#each keySignatureSymbols as symbol, symbolIndex (symbolIndex)}
       <text class="glyph" x={symbol.x} y={symbol.y} font-size={GLYPH_FONT_SIZE}>
         {symbol.glyph}
@@ -97,7 +108,8 @@
     {#each row as note, indexInRow (indexInRow)}
       <!-- この音符の玉・棒・加線・変化記号の位置をまとめて計算する -->
       <!-- 調号の数によって音符の横の位置が変わるので、signature も渡す -->
-      {@const layout = layoutNote(note, indexInRow, signature)}
+      <!-- 音部記号によって玉の高さや加線が変わるので、clefId も渡す -->
+      {@const layout = layoutNote(note, indexInRow, signature, clefId)}
 
       <!-- 楽譜全体の中で何番目の音か（段の番号 × 1段の音符の数 ＋ 段の中での順番） -->
       {@const noteIndex = rowIndex * NOTES_PER_ROW + indexInRow}
@@ -198,7 +210,7 @@
     stroke: #212121;
   }
 
-  /* 楽譜用フォントで表示する記号（アルト記号・調号・玉・変化記号） */
+  /* 楽譜用フォントで表示する記号（音部記号・調号・玉・変化記号） */
   .glyph {
     font-family: "Bravura";
     fill: #212121;

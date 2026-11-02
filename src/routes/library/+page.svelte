@@ -14,6 +14,9 @@
   // 音律のデータを探す関数を読み込む
   import { getTemperament } from "#lib/tuning.js";
 
+  // id から音部記号のデータを探す関数を読み込む（一覧に音部記号の名前を出すため）（ビオラ版）
+  import { getClef } from "#lib/staff.js";
+
   // ===== 並び順に関する設定値 =====
 
   // 選べる並び順の一覧
@@ -124,6 +127,7 @@
       hasUnsavedChanges({
         savedId: currentScore.savedId,
         keyId: currentScore.keyId,
+        clefId: currentScore.clefId,
         tempo: currentScore.tempo,
         temperamentId: loadTemperamentId(),
         notes: currentScore.notes,
@@ -138,6 +142,8 @@
     // savedId と name も入れておくので、編集ページで「保存」を押すと、この楽譜に上書きされる
     saveCurrentScore({
       keyId: score.keyId,
+      // 音部記号（入っていない古い楽譜のときは、アルト記号にする）（ビオラ版）
+      clefId: getClef(score.clefId).id,
       tempo: score.tempo,
       notes: score.notes,
       savedId: score.id,
@@ -172,6 +178,7 @@
       if (currentScore !== null) {
         saveCurrentScore({
           keyId: currentScore.keyId,
+          clefId: currentScore.clefId,
           tempo: currentScore.tempo,
           notes: currentScore.notes,
           savedId: null,
@@ -239,8 +246,8 @@
               {/if}
             </p>
 
-            <!-- 調・音律 -->
-            <p class="score-detail">{getKeyLabel(getKey(score.keyId))}・{getTemperament(score.temperamentId).name}</p>
+            <!-- 調・音部記号・音律（ビオラ版：音部記号の名前も表示する） -->
+            <p class="score-detail">{getKeyLabel(getKey(score.keyId))}・{getClef(score.clefId).name}・{getTemperament(score.temperamentId).name}</p>
 
             <!-- 音の数・テンポ・保存した日時 -->
             <p class="score-detail">{score.notes.length}音・♩＝{score.tempo}・{formatDate(score.savedAt)}</p>

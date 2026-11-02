@@ -45,8 +45,9 @@
   //                  （練習ページがテンポを覚えておき、この部品を作り直したときに同じテンポで始めるため）
   // onfinish       ：最後の音まで進んで、点数が出たときに呼ぶ関数。その回の点数を渡す
   //                  （練習ページが、楽譜ごとの最高点を記録するため）
+  // clefId         ：五線譜を描く音部記号の id（"alto"・"treble"・"tenor"）（ビオラ版。渡されなかったときはアルト記号）
   // ontempochange と onfinish は、渡されなかったときのための初期値（何もしない関数）を決めておく
-  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString, repeatEnabled, ontempochange = () => {}, onfinish = () => {} } = $props();
+  let { notes, currentKey, initialTempo, temperamentId, tolerance, allowOpenString, repeatEnabled, ontempochange = () => {}, onfinish = () => {}, clefId = "alto" } = $props();
 
   // ===== テンポとカウントに関する設定値 =====
 
@@ -503,7 +504,7 @@
 <!-- statuses には、判定の結果の種類だけを取り出した配列を渡す（音符の色と記号になる） -->
 <!-- results.map(…) は、結果を1つずつ取り出して、その中の status だけを並べた配列を作る -->
 <!-- selectedIndex と onselect で、音符をタップして選べるようにする（選んだ音は青い帯になる） -->
-<Staff {notes} signature={currentKey.signature} playingIndex={currentIndex} statuses={results.map((result) => result.status)} {selectedIndex} onselect={selectNote} />
+<Staff {notes} signature={currentKey.signature} {clefId} playingIndex={currentIndex} statuses={results.map((result) => result.status)} {selectedIndex} onselect={selectNote} />
 
 <!-- 今の状態の表示：状態によって、表示する内容を切り替える -->
 <div class="status-area">

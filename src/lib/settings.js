@@ -10,6 +10,9 @@ import { isInRange } from "./score.js";
 // 判定のレベルの一覧と、最初の設定を読み込む
 import { LEVELS, DEFAULT_LEVEL_ID } from "./level.js";
 
+// id から音部記号のデータを探す関数を読み込む（保存された楽譜の音部記号の確認に使う）（ビオラ版）
+import { getClef } from "./staff.js";
+
 // ===== ブラウザに設定を保存するための設定値 =====
 
 // 音律を保存するときの名前（localStorage の中で、この名前を付けて保存する）
@@ -110,8 +113,8 @@ export function saveSoundEnabled(enabled) {
 /**
  * 作業中の楽譜を、ブラウザに保存する関数
  * 保存しておくと、ページを再読み込みしたときや、練習ページを開いたときに、同じ楽譜を使える。
- * @param {{keyId: string, tempo: number, notes: Array, savedId: string|null, name: string}} score - 楽譜のデータ
- *   keyId：調の id、tempo：テンポ、notes：音のデータの配列、
+ * @param {{keyId: string, clefId: string, tempo: number, notes: Array, savedId: string|null, name: string}} score - 楽譜のデータ
+ *   keyId：調の id、clefId：音部記号の id（ビオラ版）、tempo：テンポ、notes：音のデータの配列、
  *   savedId：保存した楽譜のどれを開いているか（その id。まだ名前を付けて保存していないときは null）、
  *   name：楽譜の名前（まだ名前を付けて保存していないときは空の文字）
  */
@@ -152,7 +155,7 @@ function isValidNote(note) {
 /**
  * 作業中の楽譜を、ブラウザから読み込む関数
  * ブラウザの中でだけ使える機能なので、ページが画面に表示された後に呼ぶこと。
- * @returns {{keyId: string, tempo: number, notes: Array, savedId: string|null, name: string}|null}
+ * @returns {{keyId: string, clefId: string, tempo: number, notes: Array, savedId: string|null, name: string}|null}
  *   楽譜のデータ。保存されていないときや、読み込めないときは null
  */
 export function loadCurrentScore() {
@@ -176,6 +179,8 @@ export function loadCurrentScore() {
     // それぞれの音は、必要な3つの値だけを取り出した新しいデータにする
     return {
       keyId: score.keyId,
+      // 音部記号（入っていない古いデータや、知らない id のときは、getClef がアルト記号にしてくれる）（ビオラ版）
+      clefId: getClef(score.clefId).id,
       tempo: score.tempo,
       notes: score.notes.filter(isValidNote).map((note) => ({
         step: note.step,

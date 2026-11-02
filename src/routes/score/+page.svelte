@@ -25,6 +25,9 @@
   // 五線譜を描く部品を読み込む
   import Staff from "#lib/Staff.svelte";
 
+  // 音部記号の一覧と、最初の音部記号と、id から音部記号を探す関数を読み込む（ビオラ版）
+  import { CLEFS, DEFAULT_CLEF_ID, getClef } from "#lib/staff.js";
+
   // 楽譜の名前の表示と、「保存」「新規」のボタンをまとめた部品を読み込む
   import SaveBar from "#lib/SaveBar.svelte";
 
@@ -70,6 +73,10 @@
   // 選択中の音律の id
   // 最初は決まった設定にしておき、画面に表示された後で、保存された設定に入れ替える
   let temperamentId = $state(DEFAULT_TEMPERAMENT_ID);
+
+  // 選択中の音部記号の id（"alto"・"treble"・"tenor"）。楽譜ごとに1つ決める（ビオラ版）
+  // 最初はアルト記号。変えても、入れた音の高さは変わらない（五線譜の見た目だけが変わる）
+  let clefId = $state(DEFAULT_CLEF_ID);
 
   // 選択中の音律のデータ（説明の文を表示するために使う）
   let currentTemperament = $derived(getTemperament(temperamentId));
@@ -141,6 +148,9 @@
       // 調（一覧にない id が保存されていた場合は、getKey がハ長調にしてくれる）
       keyId = getKey(savedScore.keyId).id;
 
+      // 音部記号（入っていない古いデータのときは、アルト記号になる）（ビオラ版）
+      clefId = getClef(savedScore.clefId).id;
+
       // テンポ（最小と最大の間に収まるようにする）
       tempo = Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, savedScore.tempo));
 
@@ -156,7 +166,7 @@
     isLoaded = true;
   });
 
-  // 楽譜（調・テンポ・音の並び・どの保存した楽譜を開いているか・名前）が変わるたびに、ブラウザに自動で保存する
+  // 楽譜（調・音部記号・テンポ・音の並び・どの保存した楽譜を開いているか・名前）が変わるたびに、ブラウザに自動で保存する
   // $effect の中で使っている値が変わるたびに、自動で実行される
   $effect(() => {
     // 読み込みが終わるまでは保存しない
@@ -166,6 +176,7 @@
 
     saveCurrentScore({
       keyId: keyId,
+      clefId: clefId,
       tempo: tempo,
       notes: notes,
       savedId: savedId,
@@ -177,6 +188,7 @@
    * 新しい楽譜を作る関数
    * 「新規」ボタンを押して、確認で「OK」を選んだときに呼ばれる。
    * 音の並びを空にして、どの保存した楽譜も開いていない状態にする。調・テンポ・音律はそのまま残す。
+   * 音部記号は、いつもアルト記号に戻す（ビオラ版）。
    * （保存してある楽譜は消えない。消えるのは、作業中の楽譜の中身だけ）
    */
   function createNewScore() {
@@ -187,6 +199,9 @@
     notes = [];
     selectedIndex = null;
     editMode = "replace";
+
+    // 音部記号は、新しい楽譜ではいつもアルト記号から始める（ビオラ版）
+    clefId = DEFAULT_CLEF_ID;
 
     // どの保存した楽譜も開いていない状態にする（次に「保存」を押すと、名前を聞かれる）
     savedId = null;
@@ -544,6 +559,7 @@
   <!-- onnew：「新規」を押して確認で「OK」を選んだら、新しい楽譜にする -->
   <SaveBar
     {keyId}
+    {clefId}
     {tempo}
     {temperamentId}
     {notes}
@@ -584,6 +600,19 @@
     </select>
   </div>
 
+  <!-- 音部記号の選択（ビオラ版）：調と音律のメニューの下に1行で置く -->
+  <!-- 楽譜全体が同じ記号になる。変えても、入れた音の高さは変わらない -->
+  <div class="clef-row">
+    <!-- label の for と select の id をそろえると、文字を押してもメニューが選べる -->
+    <label class="clef-label" for="clef-select">音部記号</label>
+    <!-- bind:value を付けると、選んだ音部記号の id が clefId に自動で入る -->
+    <select id="clef-select" class="clef-select" bind:value={clefId}>
+      {#each CLEFS as clef (clef.id)}
+        <option value={clef.id}>{clef.name}</option>
+      {/each}
+    </select>
+  </div>
+
   <!-- 選択中の調の音階（どの音に♯・♭が付くかを確認するための表示）と、指板の図へのリンクを横に並べる -->
   <div class="scale-row">
     <p class="scale">{scaleNames.join(" ")}</p>
@@ -617,7 +646,8 @@
   <!-- 五線譜（登録した音の並びと、調号の数を渡して表示する） -->
   <!-- selectedIndex で選択中の音を、playingIndex で再生中の音を伝える -->
   <!-- 音符がタップされたら selectNote を呼んでもらう -->
-  <Staff {notes} signature={currentKey.signature} {selectedIndex} {playingIndex} onselect={selectNote} />
+  <!-- clefId で、選んだ音部記号で描く（ビオラ版） -->
+  <Staff {notes} signature={currentKey.signature} {clefId} {selectedIndex} {playingIndex} onselect={selectNote} />
 
   <!-- 登録した音の一覧（1行だけ表示して、はみ出した分は横にスクロールする。タップして音を選べる） -->
   <!-- こちらは調号に関係なく、実際に鳴る音をそのまま表示する -->
@@ -813,6 +843,30 @@
   /* 音律のメニュー */
   .temperament-select {
     flex: 2;
+  }
+
+  /* 音部記号の行（ビオラ版）：「音部記号」の文字とメニューを横に並べる */
+  .clef-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  /* 「音部記号」の文字：小さめのグレー */
+  .clef-label {
+    font-size: 0.85rem;
+    color: #616161;
+  }
+
+  /* 音部記号のメニュー：調・音律のメニューと同じ見た目にする */
+  .clef-select {
+    min-width: 0;
+    padding: 8px 4px;
+    font-size: 0.95rem;
+    border: 1px solid #bdbdbd;
+    border-radius: 8px;
+    background-color: white;
   }
 
   /* 選択中の調の音階：小さくグレーで表示する */
