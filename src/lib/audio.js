@@ -1,3 +1,6 @@
+// 【仮】音が突然鳴らなくなる原因を調べるための記録（原因がわかったら消す）
+import { watchAudioContext, logResume, logPlayWhileStopped } from "./audioDebug.js";
+
 // ===== 音を鳴らすための設定値 =====
 
 // 音の大きさ（0〜1）。大きすぎると音が割れるので、ひかえめにしておく
@@ -44,11 +47,15 @@ function getAudioContext() {
   // まだ作っていないときだけ作る
   if (audioContext === null) {
     audioContext = new AudioContext();
+    watchAudioContext(audioContext, "再生"); // 【仮】状態の変化を記録する
   }
+
+  // 【仮】動いていなければ記録する
+  logPlayWhileStopped(audioContext, "再生");
 
   // ブラウザが土台を一時停止していることがあるので、そのときは動かす
   if (audioContext.state === "suspended") {
-    audioContext.resume();
+    logResume(audioContext, "再生", audioContext.resume()); // 【仮】再開を頼んだことと結果を記録する（頼み方は今までと同じ）
   }
 
   return audioContext;

@@ -11,6 +11,9 @@
   // 保存しておいた基準の音を読み込む関数を読み込む
   import { loadReferenceFrequency } from "#lib/settings.js";
 
+  // 【仮】音が突然鳴らなくなる原因を調べるための、左下の小さな表示（原因がわかったら消す）
+  import AudioDebug from "#lib/AudioDebug.svelte";
+
   // このファイルは、全部のページに共通の枠。children は、その中に表示する、それぞれのページの中身
   let { children } = $props();
 
@@ -32,3 +35,6 @@
 </svelte:head>
 
 {@render children()}
+
+<!-- 【仮】音の仕組みの状態と記録（原因がわかったら消す） -->
+<AudioDebug />

@@ -22,6 +22,7 @@
 // 波形から周波数を検出する関数を読み込む
 // （ステップD：音の大きさ（RMS）を計算する関数も読み込む）
 import { detectPitch, calculateRms } from "./pitch.js";
+import { watchAudioContext, logResume } from "./audioDebug.js"; // 【仮】音が鳴らなくなる原因を調べる記録
 
 // ===== マイクの音を調べるための設定値 =====
 
@@ -138,8 +139,11 @@ export async function startMicrophone(onPitch) {
   // 音を扱う土台を、許可を待つ「前」に作る（ボタンを押した瞬間の処理の中で作るため）（iPad で音を拾わないのを直した手直し）
   // resume：一時停止の状態で作られたときに、再開を頼む（ここもボタンを押した瞬間の処理の中なので、iPad でも再開できる）
   const context = new AudioContext();
+  watchAudioContext(context, "マイク"); // 【仮】状態の変化を記録する
   if (context.state === "suspended") {
-    context.resume().catch(() => {}); // 再開できなくても、あとでもう一度頼む
+    const resuming = context.resume();
+    logResume(context, "マイク", resuming); // 【仮】再開を頼んだことと結果を記録する
+    resuming.catch(() => {}); // 再開できなくても、あとでもう一度頼む
   }
 
   // マイクの使用許可を求める（ここでブラウザの許可ダイアログが出る）
