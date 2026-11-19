@@ -28,9 +28,10 @@
 //   render/beatLines.js … 拍の線を描く（ステップ12-7）
 //   render/widths.js   … 小節ごとの、音符を並べるのに要る幅を決める（ステップ13-2）
 //   render/alternate.js … 2音トレモロの2つ目の音符と連桁を描く（ステップ14-6a）
+// （音程チェックアプリへの反映：楽譜作成アプリのテンポの言葉を増やした手直し d の、「♩＝ を出さない」テンポの表示（drawTempo・tempoWordsWidth）を入れた）
 // ==========================================================
 
-import { tempoAt, JUMP_TEXTS, rehearsalLabel, isMeasureRest, notePitches, samePitch, measureNumber, measureLength, noteTicks, TICKS_PER_16TH } from "./model.js";
+import { tempoAt, showsMetronome, JUMP_TEXTS, rehearsalLabel, isMeasureRest, notePitches, samePitch, measureNumber, measureLength, noteTicks, TICKS_PER_16TH } from "./model.js";
 import { computeAccidentals } from "./accidentals.js";
 import { createNote } from "./render/notes.js";
 import { drawDynamic, drawBreath, drawTrillLine, shiftTremolo, placeArticulations, relayoutBeamedMarks } from "./render/symbols.js"; // placeArticulations：スタッカートなどの上下を決め直す（楽譜作成アプリのステップ26）、relayoutBeamedMarks：連桁の音符の記号を積む高さを決め直す
@@ -1176,7 +1177,8 @@ function tempoWordsWidth(score, i) {
   if (i > 0 && info.tempo !== undefined) {
     const tempo = tempoAt(score, i);
     if (tempo.tempoText) texts.push([tempo.tempoText, "bold 15px Academico"]);
-    texts.push([`♩ = ${tempo.tempo}`, "15px Academico"]);
+    // ♩＝ を出さないテンポ変更なら、♩＝ の幅は数えない（テンポの言葉を増やした手直し d）
+    if (showsMetronome(tempo)) texts.push([`♩ = ${tempo.tempo}`, "15px Academico"]);
   }
   if (info.aTempo) texts.push(["a tempo", "italic 15px Academico"]);
   if (info.gradual) texts.push([info.gradualText ?? GRADUAL_TEXTS[info.gradual] ?? info.gradual, "italic 15px Academico"]);
@@ -1349,6 +1351,7 @@ function endingBefore(score, i) {
 // ----------------------------------------------------------
 // 関数：drawTempo
 // テンポを「Allegro ♩ = 120」の形で描く（速度記号がなければ「♩ = 120」）
+// （テンポの言葉を増やした手直し d：「♩＝ を出さない」印があって速度記号もあれば、「Allegro」だけ描く）
 //   score … tempo と tempoText が入っているもの（楽譜データ、または tempoAt で調べたもの）（ステップ11-6a）
 //   x … 書き始める横の位置
 //   y … 文字の下端（ベースライン）の位置
@@ -1362,6 +1365,13 @@ function drawTempo(context, score, x, y) {
     context.setFont("Academico", 15, "bold");
     context.fillText(score.tempoText, x, y);
     x = x + context.measureText(score.tempoText).width + 8;
+  }
+
+  // ♩＝ を出さないときは、速度記号の文字だけで終わる（テンポの言葉を増やした手直し d）
+  // （右端は、文字のあとに足した 8 を戻した所）
+  if (!showsMetronome(score)) {
+    context.restore();
+    return x - 8;
   }
 
   // 4分音符の記号（楽譜用フォントの文字。U+ECA5 は「上向きの4分音符」）

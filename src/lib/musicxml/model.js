@@ -4,6 +4,7 @@
 //   MusicXML の読み込み（musicxmlImport.js）が使う
 //   （半拍刻みに対応：describeLength を足した。ほかは変えていない）
 // 楽譜データの「形」の説明と、表示・計算に使う表をまとめたファイル
+// （音程チェックアプリへの反映：楽譜作成アプリのテンポの言葉を増やした手直し d の、テンポの「♩＝ を出さない」印 tempoHidden（tempoAt・showsMetronome）を入れた）
 // ==========================================================
 //
 // 【楽譜データの形】
@@ -499,14 +500,27 @@ export function timeAt(score, i) {
 // i 小節目（0 から数える）のテンポを返す（ステップ11-6a）
 // テンポが変わる小節には measures[i].tempo（と、あれば tempoText）が書いてある
 // 1小節目のテンポは、楽譜全体の score.tempo・score.tempoText（「楽譜の設定」タブで変えるもの）
-// 戻り値：{ tempo: ♩＝○○ の数字, tempoText: 速度記号（なければ空の文字） }
+// 戻り値：{ tempo: ♩＝○○ の数字, tempoText: 速度記号（なければ空の文字）, tempoHidden: ♩＝ を出さない印 }
+// （テンポの言葉を増やした手直し d：♩＝ を出さない印 tempoHidden も返すようにした（なければ false））
 // ----------------------------------------------------------
 export function tempoAt(score, i) {
   for (let k = i; k >= 1; k--) {
     const info = score.measures[k];
-    if (info.tempo !== undefined) return { tempo: info.tempo, tempoText: info.tempoText ?? "" };
+    if (info.tempo !== undefined) return { tempo: info.tempo, tempoText: info.tempoText ?? "", tempoHidden: !!info.tempoHidden };
   }
-  return { tempo: score.tempo, tempoText: score.tempoText ?? "" };
+  return { tempo: score.tempo, tempoText: score.tempoText ?? "", tempoHidden: !!score.tempoHidden };
+}
+
+// ----------------------------------------------------------
+// 関数：showsMetronome
+// テンポの ♩＝○○ を楽譜に出すかを返す（テンポの言葉を増やした手直し d）
+// 「♩＝ を出さない」の印があって、速度記号の文字もあるときだけ出さない
+// （文字がないのに出さないと、楽譜に何も書かれず、速さが変わることが分からなくなるため）
+//   tempo … tempoAt の結果（か、楽譜データ）{ tempoText, tempoHidden }
+// 戻り値：出すなら true
+// ----------------------------------------------------------
+export function showsMetronome(tempo) {
+  return !(tempo.tempoHidden && tempo.tempoText);
 }
 
 // ----------------------------------------------------------

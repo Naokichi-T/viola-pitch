@@ -6,6 +6,8 @@
 // （前打音の付いた音の判定：前打音の付いた音も判定するようにした。前打音の時間をよけるため、
 //   その音の start を「拍の頭 ＋ 前打音の長さ」（主音が鳴り始める時刻。再生と同じ）にする。
 //   お手本の音（sounds）にも前打音を入れて、主音をそのぶん遅らせる（再生と同じタイミングにする））
+// （テンポの言葉を増やした手直しの反映：Più mosso・Meno mosso・Tempo primo など「急に速さが変わる」小節では、
+//   変わった所から SUDDEN_LOOSE_NOTES 個の音だけ、リズムの OK の範囲を LOOSE_AFTER_SUDDEN 倍にする）
 // 「通し」で、判定する音ごとに「何秒から何秒まで鳴るか」を決める。
 // 時刻の計算は、楽譜作成アプリ（string-score）の再生の計算（playback.js の buildEvents）をそのまま使うので、
 // テンポの変化・rit.・accel.・a tempo・フェルマータ・カエスーラ・くり返し・アウフタクトが、再生とぴったり同じになる。
@@ -30,6 +32,7 @@
 //                                                  rit.・accel.（「遅くする」「速くする」の自由な文字も）の範囲の中：
 //                                                    範囲の頭で 2倍 → 範囲の終わりで 4倍（進むほど広げる）
 //                                                  フェルマータの付いた音（休符も）のすぐ次の音：4倍
+//                                                  急に速さが変わる所（Più mosso など）から2つの音：2倍（テンポの言葉を増やした手直しの反映）
 //       rhythmLabel:  null                       … 甘くした理由の印（結果の札に出す。"rit."・"rall."・"𝄐" など。ふつうの音は null）
 //     }
 //   ],
@@ -237,11 +240,23 @@ const LOOSE_AFTER_FERMATA = 4;
 // フェルマータの印（結果の札に出す）
 const FERMATA_LABEL = "𝄐";
 
+// 急に速さが変わる所（Più mosso・Meno mosso・Tempo primo など）から、いくつの音を甘くするか（テンポの言葉を増やした手直しの反映）
+// （お手本はその小節の頭から新しい速さになるが、弾く人が新しい速さに乗るまでに少しかかるため）
+const SUDDEN_LOOSE_NOTES = 2;
+
+// 急に速さが変わる所の音で、OK の範囲を何倍にするか（テンポの言葉を増やした手直しの反映）
+const LOOSE_AFTER_SUDDEN = 2;
+
+// 急に速さが変わる扱い（楽譜データの gradual に入るもの）と、文字がないときに札に出す印（テンポの言葉を増やした手直しの反映）
+const SUDDEN_LABELS = { faster: "Più mosso", slower: "Meno mosso", tempoPrimo: "Tempo I" };
+
 /**
  * 判定する音ごとに、リズムの OK の範囲を何倍にするかと、甘くした理由の印を決める関数（このファイルの中だけで使う）（ステップE-3）
  *   ・rit.・accel.（「遅くする」「速くする」の自由な文字も）の範囲の中の音：範囲の頭からどこまで進んだか（0〜1）で、
  *     LOOSE_START 倍から LOOSE_END 倍まで広げる。くり返しで2回目に通ったときは、その回の範囲の頭と終わりで数える
  *   ・フェルマータの付いた音（休符も）のすぐ次の音：LOOSE_AFTER_FERMATA 倍
+ *   ・急に速さが変わる所（Più mosso など）から SUDDEN_LOOSE_NOTES 個の音：LOOSE_AFTER_SUDDEN 倍（テンポの言葉を増やした手直しの反映）
+ *     くり返しで2回目に通ったときも、その回の小節の頭から数える
  *   ・「再生では変えない」の自由な文字（dolce など）の範囲は、ふつうのまま
  * @param {object} record - 読み込んだ楽譜
  * @param {object} score - テンポを変えた楽譜データ（楽譜作成アプリの形）
@@ -270,6 +285,17 @@ function buildRhythmLoose(record, score, result, starts, targets) {
     ranges.push({ from: start.startTick, to: to, label: info.gradualText ?? (info.gradual === "rit" ? "rit." : "accel.") });
   });
 
+  // ①-2 急に速さが変わる所を、鳴らす順に並べる { tick: 変わる時刻（その小節の頭。ティック）, label: 書いてある文字 }
+  //      （テンポの言葉を増やした手直しの反映）
+  const suddenPoints = [];
+  measureStarts.forEach((start) => {
+    const info = score.measures[start.measure];
+    if (SUDDEN_LABELS[info.gradual] === undefined) {
+      return;
+    }
+    suddenPoints.push({ tick: start.startTick, label: info.gradualText ?? SUDDEN_LABELS[info.gradual] });
+  });
+
   // ② 判定する音ごとに決める
   return starts.map((tick, index) => {
     if (tick === null) {
@@ -288,8 +314,35 @@ function buildRhythmLoose(record, score, result, starts, targets) {
       return { factor: LOOSE_AFTER_FERMATA, label: FERMATA_LABEL };
     }
 
+    // 急に速さが変わる所から、SUDDEN_LOOSE_NOTES 個目までの音か（テンポの言葉を増やした手直しの反映）
+    // いちばん近い（この音より前か同じ時刻の）変わる所を探して、そこからこの音の前までにある音の数を数える
+    const point = nearestSuddenPoint(suddenPoints, tick);
+    if (point !== null) {
+      const before = starts.filter((other, k) => k !== index && other !== null && other >= point.tick && other < tick).length;
+      if (before < SUDDEN_LOOSE_NOTES) {
+        return { factor: LOOSE_AFTER_SUDDEN, label: point.label };
+      }
+    }
+
     return { factor: 1, label: null };
   });
+}
+
+/**
+ * 急に速さが変わる所のうち、その時刻より前か同じ時刻で、いちばん近いものを返す関数（このファイルの中だけで使う）
+ * （テンポの言葉を増やした手直しの反映）
+ * @param {{tick: number, label: string}[]} points - 急に速さが変わる所（鳴らす順）
+ * @param {number} tick - 調べる時刻（ティック）
+ * @returns {{tick: number, label: string}|null} 見つかった所。なければ null
+ */
+function nearestSuddenPoint(points, tick) {
+  let found = null;
+  points.forEach((point) => {
+    if (point.tick <= tick && (found === null || point.tick > found.tick)) {
+      found = point;
+    }
+  });
+  return found;
 }
 
 /**

@@ -8,6 +8,7 @@
 // （前打音の付いた音の判定：前打音の付いた音（主音）も判定するようにした。前打音（小さい音符）そのものは判定しない。
 //   前打音の時間をよけて判定するのは importedTimeline.js（通し）。五線譜では、前打音だけを灰色にする（render.js））
 // （「じっくり」の前打音：「じっくり」では、前打音も1つの目標の音として判定する。buildTargets に includeGrace を足した）
+// （テンポの言葉を増やした手直しの反映：1小節目のテンポの「♩＝ を出さない」印 tempoHidden も保存し、五線譜に描く形に渡すようにした）
 // 手で入力した楽譜（library.js）とは、保存する場所も形も別にしている。
 //
 // 【読み込んだ楽譜の形】
@@ -23,6 +24,7 @@
 //   temperamentId: 音律の id（読み込んだときに選ばれていた音律。練習ページで変えると、楽譜ごとに覚える）
 //   tempo:         1小節目のテンポ（♩＝○○）
 //   tempoText:     速度記号（'Allegro' など。なければ空の文字）
+//   tempoHidden:   true なら、五線譜に ♩＝○○ を出さず、速度記号の文字だけ出す（MuseScore の「Andante」だけの楽譜など。なければ出す）
 //   measures:      楽譜全体の小節の情報（拍子・調・途中のテンポ・rit.・くり返しなど。楽譜作成アプリと同じ形）
 //   partMeasures:  選んだパートの小節（音符の並び。楽譜作成アプリと同じ形）
 //   importedAt:    読み込んだ日時（ミリ秒の数字）
@@ -440,6 +442,7 @@ export function buildImportedScore(score, partIndex, keyId, name) {
     temperamentId: loadTemperamentId(),
     tempo: score.tempo,
     tempoText: score.tempoText ?? "",
+    tempoHidden: !!score.tempoHidden, // ♩＝ を出さない印（テンポの言葉を増やした手直しの反映）
     measures: score.measures,
     partMeasures: part.measures,
   };
@@ -475,6 +478,7 @@ export function toRenderScore(record, showSymbols = true) {
     composer: "",
     tempo: record.tempo,
     tempoText: record.tempoText ?? "",
+    tempoHidden: !!record.tempoHidden, // ♩＝ を出さない印（テンポの言葉を増やした手直しの反映。前に読み込んだ楽譜には無いので、出す）
     measures: record.measures,
     parts: [
       {

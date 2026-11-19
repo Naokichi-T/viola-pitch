@@ -60,6 +60,12 @@
 //                            （1つの音符の中で始まって終わる松葉は、次の音符まで延ばす（ステップ15-6））
 //   休符には記号を付けない（このアプリの決まり。記号タブでも休符には付けられない）
 //   このアプリにない記号（トリルなど）は読まずに、種類ごとの数を知らせる
+// （音程チェックアプリへの反映：楽譜作成アプリのテンポの言葉を増やした手直し a・d と、前打音で終わるスラーの手直しを入れた）
+//   ・言葉の表に新しく入れた「急に速く・急に遅く・曲の頭の速さに戻す」も、自由な文字として読む
+//   ・MuseScore などの「文字＋隠れた数字（<sound tempo> だけで <metronome> なし）」の指示：
+//       文字が言葉の表に当たれば言葉の印だけにする（二重に出ないように）。当たらなければ「♩＝ を出さない」テンポ変更にする
+//   ・楽譜作成アプリで書き出した 急に遅く・急に速く・曲の頭へ も、id から読み直す
+//   ・前打音に付いたスラーの「ここまで」を、前打音の直前の音で終わらせる（endSlurAtGrace）
 // ==========================================================
 
 import { unzipSync } from "fflate";
@@ -389,9 +395,17 @@ function sameTime(a, b) {
 //   ・♩ = ○○ … <metronome> の <per-minute>（4分音符以外が基準なら4分音符に直す）
 //                なければ <sound tempo="…">
 //   ・速度記号 … テンポと同じ <direction> の中の <words>（"Allegro" など）
-// 戻り値：{ tempo: 数字か null, tempoText: 文字 }
+// （テンポの言葉を増やした手直し d）
+//   ・<metronome> があったか（hasMetronome）も返す。なければ「♩＝ を出さない」テンポにするのに使う
+//   ・skipWordMarks が true（2小節目から）なら、次の <direction> はテンポとして使わない
+//       - このアプリで書き出したテンポの印（id の印がある。急に速く などの <sound tempo> 付きのもの）
+//       - <metronome> がなく、文字が言葉の表に当たるもの（MuseScore の「Piu mosso」＋隠れた数字 など）
+//     （どちらも readTempoMarks の ② で、言葉の印として読む。ここでも読むと、テンポ変更と文字が二重になるため）
+//   firstMeasure  … 調べる <measure>（名前は1小節目用だが、2小節目からも使う）
+//   skipWordMarks … 上の2つを飛ばすか
+// 戻り値：{ tempo: 数字か null, tempoText: 文字, hasMetronome: <metronome> があったか }
 // ----------------------------------------------------------
-function readTempo(firstMeasure) {
+function readTempo(firstMeasure, skipWordMarks = false) {
   // 基準の音符の、4分音符に対する長さ（付点なし）
   const UNIT_QUARTERS = { whole: 4, half: 2, quarter: 1, eighth: 0.5, "16th": 0.25, "32nd": 0.125 }; // 32分音符はステップ15-5
 
@@ -417,6 +431,12 @@ function readTempo(firstMeasure) {
       });
     });
 
+    // <metronome> があったか（テンポの言葉を増やした手直し d）
+    const hasMetronome = tempo !== null;
+
+    // 言葉の印として読むものは、テンポとして使わない（テンポの言葉を増やした手直し d）
+    if (skipWordMarks && (gradualTypeFromId(direction) || (!hasMetronome && words.length > 0 && tempoWordKind(words.join(" ")) !== null))) continue;
+
     // <metronome> がなければ、再生用の速さを使う
     if (tempo === null) {
       const sound = childElement(direction, "sound");
@@ -426,10 +446,10 @@ function readTempo(firstMeasure) {
 
     // テンポが見つかった <direction> を使う（文字だけの指示は、速度記号とは限らないので使わない）
     if (tempo !== null) {
-      return { tempo: tempo, tempoText: words.join(" ") };
+      return { tempo: tempo, tempoText: words.join(" "), hasMetronome: hasMetronome };
     }
   }
-  return { tempo: null, tempoText: "" };
+  return { tempo: null, tempoText: "", hasMetronome: false };
 }
 
 // ----------------------------------------------------------
@@ -1061,7 +1081,8 @@ function readTempoMarks(measureElements, score) {
     const info = score.measures[i];
 
     // ① テンポ変更（文字が a tempo なら a tempo）（1小節目のテンポは readTempo で読んであるので、飛ばす）
-    const { tempo, tempoText } = i > 0 ? readTempo(measureElement) : { tempo: null, tempoText: "" };
+    // （テンポの言葉を増やした手直し d：言葉の印として読むもの（Piu mosso＋隠れた数字 など）は、ここでは飛ばす（readTempo の skipWordMarks））
+    const { tempo, tempoText, hasMetronome } = i > 0 ? readTempo(measureElement, true) : { tempo: null, tempoText: "", hasMetronome: false };
     if (tempo !== null) {
       closeOpen(i - 1); // テンポが変わる所で、rit.・accel. は終わる
       if (tempoWordKind(tempoText) === "aTempo") {
@@ -1072,6 +1093,9 @@ function readTempoMarks(measureElements, score) {
         if (rounded !== now.tempo || tempoText !== now.tempoText) {
           info.tempo = rounded;
           if (tempoText) info.tempoText = tempoText;
+          // ♩＝ が書かれていない（文字と隠れた数字だけの）テンポ変更は、♩＝ を出さない（テンポの言葉を増やした手直し d）
+          // （文字もないときは、速さが変わることが分かるように ♩＝ を出す）
+          if (!hasMetronome && tempoText) info.tempoHidden = true;
         }
       }
     }
@@ -1083,6 +1107,9 @@ function readTempoMarks(measureElements, score) {
       const hasDashes = types.some((type) => childElements(type, "dashes").some((d) => d.getAttribute("type") === "start"));
       // このアプリで書き出したものなら、id に書いた再生での扱い（自由な文字のテンポの指示）
       const typeFromId = gradualTypeFromId(direction);
+      // ♩＝ の表示（<metronome>）がある <direction> は、① でテンポ変更として読んだので、ここでは文字を読まない
+      // （「Più mosso ♩＝70」のように ♩＝ が見えている指示が、テンポ変更と急に速く の二重にならないように）（テンポの言葉を増やした手直し d）
+      if (!typeFromId && direction.getElementsByTagName("metronome").length > 0) return;
       types.forEach((type) => {
         childElements(type, "words").forEach((words) => {
           const text = words.textContent.trim();
@@ -1093,7 +1120,16 @@ function readTempoMarks(measureElements, score) {
             if (i === 0) return; // 1小節目の a tempo は意味がないので読まない
             closeOpen(i - 1);
             info.aTempo = true;
-          } else if (kind === "rit" || kind === "accel" || kind === "none" || (kind === null && hasDashes && !jumpWordKind(text))) {
+          } else if (
+            kind === "rit" ||
+            kind === "accel" ||
+            kind === "none" ||
+            // （テンポの言葉を増やした手直し a：急に速く・急に遅く・曲の頭の速さに戻す、も読む。再生での扱いは playback.js の makeTempoWarp）
+            kind === "faster" ||
+            kind === "slower" ||
+            kind === "tempoPrimo" ||
+            (kind === null && hasDashes && !jumpWordKind(text))
+          ) {
             // テンポの印の言葉か、表にない言葉でも点線が付いているもの（D.C.・Fine などは除く）
             closeOpen(i - 1);
             info.gradual = kind ?? "none"; // 表にない言葉は「再生では変えない」
@@ -1200,17 +1236,47 @@ function keyAtMeasures(measures, i) {
 }
 
 // ----------------------------------------------------------
+// 関数：endSlurAtGrace
+// 前打音（<grace> の付いた音）に、開いているスラーの「ここまで」が付いていたら、
+// そのスラーを前打音の直前の音（state.lastNote）で終わらせる（前打音で終わるスラーの手直し）
+// （このアプリは前打音にスラーの印を持てないため。前は読まずに捨てていたので、スラーが開いたままになり、
+//   次のスラーまで長くのびたり、あとのスラーが「重なったスラー」として捨てられたりしていた）
+//   ・直前の音が、そのスラーの始まりの音そのもの（1音だけのスラーになる）なら、そのスラーは付けない
+//   ・前打音から始まるスラー（前打音と主音をつなぐもの）は、今までどおり読まない（いつも自動で描くため）
+//   graceElement … 前打音の <note>
+//   state        … 読み込みの途中の情報（slurNumber：開いているスラーの番号、lastNote：直前の休符でない音）
+// ----------------------------------------------------------
+function endSlurAtGrace(graceElement, state) {
+  const notations = childElement(graceElement, "notations");
+  if (!notations) return;
+  childElements(notations, "slur").forEach((slur) => {
+    if (slur.getAttribute("type") !== "stop") return;
+    const number = slur.getAttribute("number") ?? "1";
+    if (state.slurNumber !== number) return; // 開いているスラーの「ここまで」でなければ使わない
+    state.slurNumber = null; // スラーを閉じる
+    const last = state.lastNote;
+    if (!last) return;
+    if (last.slur === "start") {
+      delete last.slur; // 1音だけのスラーになるので付けない
+    } else if (last.slur === undefined) {
+      last.slur = "stop"; // 直前の音で終わらせる
+    }
+  });
+}
+
+// ----------------------------------------------------------
 // 関数：gradualTypeFromId
 // このアプリで書き出した rit.・accel.・自由な文字の <direction> なら、id から再生での扱いを取り出す（自由な文字のテンポの指示）
 // 例：id="string-score-gradual-none-7" → "none"
 //   direction … <direction> の要素
-// 戻り値："rit"・"accel"・"none"（このアプリの印でなければ null）
+// 戻り値："rit"・"accel"・"none"・"slower"・"faster"・"tempoPrimo"（このアプリの印でなければ null）
+// （テンポの言葉を増やした手直し d：急に遅く・急に速く・曲の頭へ も読み直せるようにした）
 // ----------------------------------------------------------
 function gradualTypeFromId(direction) {
   const id = direction.getAttribute("id") ?? "";
   if (!id.startsWith(GRADUAL_ID_PREFIX)) return null;
   const type = id.slice(GRADUAL_ID_PREFIX.length).split("-")[0];
-  return ["rit", "accel", "none"].includes(type) ? type : null;
+  return ["rit", "accel", "none", "slower", "faster", "tempoPrimo"].includes(type) ? type : null;
 }
 
 // ----------------------------------------------------------
@@ -1570,6 +1636,8 @@ function readPart(partElement, counter, skipped) {
             },
           };
           markCourtesy(element, state.pendingGrace.pitch); // 臨時記号が書いてあれば、注意の記号の印（注意の臨時記号）
+          // 前打音で終わるスラーを、前打音の直前の音で終わらせる（前打音で終わるスラーの手直し）
+          endSlurAtGrace(element, state);
           continue;
         }
 
@@ -2139,7 +2207,7 @@ export function musicXMLToScore(text, fallbackTitle = "") {
   }
 
   // ⑦ テンポ（見つからなければ 80。このアプリで使える 20〜300 に収める）
-  const { tempo, tempoText } = readTempo(childElements(partElements[0], "measure")[0]);
+  const { tempo, tempoText, hasMetronome } = readTempo(childElements(partElements[0], "measure")[0]);
   const roundedTempo = tempo === null ? 80 : Math.min(300, Math.max(20, Math.round(tempo)));
 
   const score = {
@@ -2150,6 +2218,8 @@ export function musicXMLToScore(text, fallbackTitle = "") {
     measures: measures,
     parts: parts,
   };
+  // 1小節目のテンポも、♩＝ が書かれていない（文字と隠れた数字だけの）ときは、♩＝ を出さない（テンポの言葉を増やした手直し d）
+  if (tempo !== null && !hasMetronome && tempoText) score.tempoHidden = true;
 
   // ⑧ 2小節目からのテンポの指示（途中のテンポ変更・rit.・accel.・a tempo）（ステップ11-6c）
   readTempoMarks(childElements(partElements[0], "measure"), score);
