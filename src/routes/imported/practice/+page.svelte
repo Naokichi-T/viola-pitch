@@ -22,7 +22,8 @@
 
   // 読み込んだ楽譜を id で探す関数・五線譜に描く形にする関数・灰色にする音符の表を作る関数と、
   // 判定する音の並びを作る関数・くり返しがあるかを調べる関数・音符の場所から番号を探す関数・区間を決める関数を読み込む
-  import { getImportedScore, toRenderScore, getExcludedNoteColors, buildTargets, hasRepeats, findTargetIndexes, findRange } from "#lib/imported.js";
+  // （区間の外を薄くする：区間の外の音符の色の表を作る関数 getOutOfRangeColors も読み込む）
+  import { getImportedScore, toRenderScore, getExcludedNoteColors, buildTargets, hasRepeats, findTargetIndexes, findRange, getOutOfRangeColors } from "#lib/imported.js";
 
   // 小節を「3小節目」などの文字にする関数を読み込む（楽譜作成アプリからコピーしたもの）
   import { measureName } from "#lib/musicxml/model.js";
@@ -228,6 +229,20 @@
     return { from: Math.min(...measures), to: Math.max(...measures) };
   });
 
+  // 練習の五線譜の、もとになる色の表（区間の外を薄くする）
+  // 灰色の音（判定から外す音）に、区間を決めているときは、区間の外の音符の薄い灰色を重ねる
+  // （「じっくり」の色（practiceColors）と「通し」の部品（baseColors）の両方で使う。区間を選ぶ画面では使わない）
+  let practiceBaseColors = $derived.by(() => {
+    if (rangeStart === null || displayRange === null || record === null) {
+      return excludedColors;
+    }
+    // 区間を決めたときと同じ並び（くり返しのない楽譜では、いつも展開した並び）
+    const expand = repeatsExist ? rangeIncludesRepeats : true;
+    const outside = getOutOfRangeColors(record, rangeTargets, rangeStart, rangeEnd, expand, displayRange.from, displayRange.to);
+    // 区間の外の色を、灰色の音の色より優先する（あとから入れたほうが残る）
+    return new Map([...excludedColors, ...outside]);
+  });
+
   // 区間が変わったことを見分けるための目印。これが変わると、練習の部品を作り直して、最初の音からやり直す
   let rangeKey = $derived(rangeStart + "-" + rangeEnd + "-" + rangeIncludesRepeats);
 
@@ -294,7 +309,8 @@
    * @returns {Map<string, string>} 音符ごとの色の表
    */
   function practiceColors(targetIndex, passed) {
-    const colors = new Map(excludedColors);
+    // もとになる色：灰色の音 ＋ 区間の外の薄い灰色（区間の外を薄くする）
+    const colors = new Map(practiceBaseColors);
 
     // 色の表のキー（「じっくり」の前打音：前打音の目標は、最後に「-g」を付けて、主音の色とは別にする）
     const keyOf = (target, p) => "0-" + p.measure + "-" + p.note + (target.grace ? "-g" : "");
@@ -743,7 +759,7 @@
             <!-- 「通し」：時刻表を作る関数・テンポ・最高点を記録する関数などを渡す -->
             <ImportedRunPractice
               score={renderScoreData}
-              baseColors={excludedColors}
+              baseColors={practiceBaseColors}
               {getTimeline}
               {currentKey}
               initialTempo={runTempo}
