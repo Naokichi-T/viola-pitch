@@ -699,26 +699,53 @@ export function findTargetIndexes(targets, position) {
 /**
  * 区間を選ぶときにタップした2つの音符から、区間（判定する音の並びの、始めと終わりの番号）を決める関数（ステップB）
  * 前にあるほうを始め、後ろにあるほうを終わりにする（終わりの音符を先にタップしてもよい）。
- * くり返しを展開した並びでは、始めは「その音符の1回目」、終わりは「その音符の最後の回」にする。
+ * （区間の決め方の手直し）くり返しを展開した並びでは、同じ音符が2回以上出てくるので、
+ *   「始め ≦ 終わり」になる組み合わせの中から、いちばん短い区間を選ぶ。
+ *   長さが同じ区間がいくつかあるときは、前にあるほう（始めの番号が小さいほう）を選ぶ。
+ *   例：‖: 4〜11小節目 :‖ の楽譜で、4小節目と7小節目をタップしたとき
+ *       → 1回目の4〜7小節目だけ（前は、1回目の4小節目から2回目の7小節目まで＝4〜11→4〜7 になっていた）
+ *   例：10小節目と12小節目（2番かっこ）をタップしたとき
+ *       → 2回目の10小節目から12小節目へ（いちばん近い道順）
  * @param {object[]} targets - 判定する音の並び
  * @param {{measure: number, note: number}} first - 1回目にタップした音符の場所
  * @param {{measure: number, note: number}} second - 2回目にタップした音符の場所
  * @returns {{start: number, end: number}|null} 区間の番号（0から）。どちらかが判定する音でないときは null
  */
 export function findRange(targets, first, second) {
+  // それぞれの音符が、並びの何番目に出てくるか（くり返しを展開した並びでは、2つ以上あることがある）
   const firstIndexes = findTargetIndexes(targets, first);
   const secondIndexes = findTargetIndexes(targets, second);
   if (firstIndexes.length === 0 || secondIndexes.length === 0) {
     return null;
   }
 
-  // 始め：2つの音符の「1回目」のうち、前にあるほう
-  const start = Math.min(firstIndexes[0], secondIndexes[0]);
+  // いちばんよい区間（まだ見つけていないときは null）
+  let best = null;
 
-  // 終わり：2つの音符の「最後の回」のうち、後ろにあるほう
-  const end = Math.max(firstIndexes[firstIndexes.length - 1], secondIndexes[secondIndexes.length - 1]);
+  // 始めと終わりの組み合わせを全部ためす
+  // （1回目にタップした音符が始めの場合と、2回目にタップした音符が始めの場合の両方）
+  const pairs = [
+    [firstIndexes, secondIndexes],
+    [secondIndexes, firstIndexes],
+  ];
+  pairs.forEach(([startIndexes, endIndexes]) => {
+    startIndexes.forEach((start) => {
+      endIndexes.forEach((end) => {
+        // 始めが終わりより後ろになる組み合わせ（逆向き）は使わない
+        if (start > end) {
+          return;
+        }
+        // 今までの候補より短ければ、または同じ長さで前にあれば、こちらにする
+        const isShorter = best === null || end - start < best.end - best.start;
+        const isSameAndEarlier = best !== null && end - start === best.end - best.start && start < best.start;
+        if (isShorter || isSameAndEarlier) {
+          best = { start: start, end: end };
+        }
+      });
+    });
+  });
 
-  return { start: start, end: end };
+  return best;
 }
 
 /**

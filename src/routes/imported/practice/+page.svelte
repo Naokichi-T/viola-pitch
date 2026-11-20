@@ -201,15 +201,20 @@
   // 楽譜に前打音の目標があるか（あれば、「前打音は…」の説明を出す）
   let hasGraceTargets = $derived(stepPool.some((target) => target.grace === true));
 
-  // 画面に表示する、今の区間の説明（例：「全体（120音）」「3小節目〜8小節目（24音）・くり返しを含む」）
+  // 画面に表示する、今の区間の説明（例：「全体（120音）」「3小節目 2つ目〜8小節目 4つ目（24音）・くり返しを含む」）
+  // （区間の決め方の手直し）始めと終わりの音が、小節の中で何つ目かも出す。休符も1つに数える（楽譜作成アプリの「○つ目」と同じ数え方）
   let rangeText = $derived.by(() => {
     if (rangeStart === null) {
       return "全体（" + allTargets.length + "音）";
     }
+    // 区間の始めの音と終わりの音の、五線譜の音符の場所（タイでつながった音は、最初の音符の場所）
     const first = practiceTargets[0].positions[0];
     const last = practiceTargets[practiceTargets.length - 1].positions[0];
+    // 「3小節目 2つ目」の形にする（note は 0 から数えるので、1 を足す）
+    const firstText = measureName(renderScoreData, first.measure) + " " + (first.note + 1) + "つ目";
+    const lastText = measureName(renderScoreData, last.measure) + " " + (last.note + 1) + "つ目";
     const repeatNote = repeatsExist ? (rangeIncludesRepeats ? "・くり返しを含む" : "・くり返しなし") : "";
-    return measureName(renderScoreData, first.measure) + "〜" + measureName(renderScoreData, last.measure) + "（" + practiceTargets.length + "音）" + repeatNote;
+    return firstText + "〜" + lastText + "（" + practiceTargets.length + "音）" + repeatNote;
   });
 
   // 五線譜に描く小節の範囲 { from, to }（ステップD-3）
