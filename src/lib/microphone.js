@@ -21,7 +21,8 @@
 
 // 波形から周波数を検出する関数を読み込む
 // （ステップD：音の大きさ（RMS）を計算する関数も読み込む）
-import { detectPitch, calculateRms } from "./pitch.js";
+// （2026/11/23：1オクターブ上の候補も受け取れる detectPitchWithCandidate に変えた）
+import { detectPitchWithCandidate, calculateRms } from "./pitch.js";
 import { watchAudioContext, logResume } from "./audioDebug.js"; // 【仮】音が鳴らなくなる原因を調べる記録
 
 // ===== マイクの音を調べるための設定値 =====
@@ -42,6 +43,12 @@ const RMS_SIZE = 1024;
 // iPad・iPhone で、届いた音を何倍にするか（iPad・iPhone では、マイクの音がとても小さく届くため）
 // （iPad・iPhone では、届いた音を30倍にする手直し。ほかの端末は1倍）
 const APPLE_MOBILE_GAIN = 30;
+
+// 【2026/11/23 追加（A線の音が1オクターブ下と測られる不具合の直し）】
+// 測った高さが「目標の1オクターブ下」から、この幅（セント）以内で、
+// 上の候補が「目標」から、この幅以内なら、測り間違いとみなして上の候補を採る
+// （メーターに出す範囲（50セント）より少し広くして、少し外れた音程でも直す。直したあとは、ふつうに「高い」「低い」と判定される）
+const OCTAVE_FIX_CENTS = 60;
 
 // ===== マイクの音を調べるための部品 =====
 
@@ -89,6 +96,31 @@ let listener = null;
 // マイクを開始した回数。開始の途中で停止されたことに気づくために使う
 let requestCount = 0;
 
+// 今の目標の音の周波数（Hz）。練習のページが setPitchTarget で教える。目標がないとき（チューナーなど）は null
+// （2026/11/23 追加：1オクターブ下と測り間違えたときに直すために使う）
+let pitchTarget = null;
+
+/**
+ * 今の目標の音を教える関数（2026/11/23 追加）
+ * 練習のページが、目標の音が変わるたびに呼ぶ。目標がなくなったら null を渡す。
+ * 目標を教えておくと、目標の1オクターブ下と測り間違えたときに、目標の高さに直す。
+ * マイクを止めると（stopMicrophone）、目標も消える。
+ * @param {number|null} frequency - 目標の音の周波数（Hz）。目標がないときは null
+ */
+export function setPitchTarget(frequency) {
+  pitchTarget = frequency;
+}
+
+/**
+ * 2つの周波数が、何セント離れているかを求める関数（2026/11/23 追加）
+ * @param {number} a - 周波数（Hz）
+ * @param {number} b - 周波数（Hz）
+ * @returns {number} a が b より何セント高いか（低いときはマイナス）
+ */
+function centsBetween(a, b) {
+  return 1200 * Math.log2(a / b);
+}
+
 /**
  * 中央値を計算する関数
  * 中央値は、値を小さい順に並べたときに真ん中に来る値のこと。
@@ -122,6 +154,7 @@ function calculateMedian(values) {
  *   音の高さが分かるたびに呼ばれる関数。周波数（Hz）が渡される。音が出ていないときは null が渡される
  *   （ステップD：2つ目に音量（RMS。0 に近いほど静か）、3つ目に、なめらかにする前のその回の周波数（検出できないときは null）も渡す。
  *    リズムの判定で、音の出だしを見つけるのに使う。1つ目だけを受け取る使い方は、今までどおり動く）
+ *   （2026/11/23：4つ目に、その回の値を1オクターブ上に直したかどうか（true：直した）も渡す。判定の記録に使う）
  */
 export async function startMicrophone(onPitch) {
   // すでに動いていた場合は、いったん止める
@@ -234,7 +267,22 @@ function update() {
   analyser.getFloatTimeDomainData(waveform);
 
   // 波形から周波数を検出する（検出できなかったときは null が入る）
-  const detected = detectPitch(waveform, audioContext.sampleRate);
+  // （2026/11/23：1オクターブ上の候補も一緒に受け取る）
+  const result = detectPitchWithCandidate(waveform, audioContext.sampleRate);
+  let detected = result === null ? null : result.frequency;
+
+  // 1オクターブ下と測り間違えたときに直す（2026/11/23 追加）
+  //   目標が分かっていて、測った高さが目標の約1オクターブ下で、上の候補が目標に近いときだけ、上の候補を採る
+  //   （なめらかにする前に直すので、なめらかにした値も、1オクターブ下に引っぱられなくなる）
+  let octaveFixed = false;
+  if (detected !== null && pitchTarget !== null && result.upperFrequency !== null) {
+    const isOctaveBelow = Math.abs(centsBetween(detected, pitchTarget / 2)) <= OCTAVE_FIX_CENTS;
+    const isUpperNearTarget = Math.abs(centsBetween(result.upperFrequency, pitchTarget)) <= OCTAVE_FIX_CENTS;
+    if (isOctaveBelow && isUpperNearTarget) {
+      detected = result.upperFrequency;
+      octaveFixed = true;
+    }
+  }
 
   // 波形の最後のほう（RMS_SIZE 個）の音量（ステップD）
   const rms = calculateRms(waveform.subarray(waveform.length - RMS_SIZE));
@@ -243,7 +291,7 @@ function update() {
     // 検出できなかったとき：ためた値を消して、「音が出ていない」と伝える
     // （ステップD：音量と、なめらかにする前の値（null）も一緒に伝える）
     history = [];
-    listener(null, rms, null);
+    listener(null, rms, null, false);
   } else {
     // 検出できたとき：検出値を配列の最後に追加する
     history.push(detected);
@@ -255,7 +303,8 @@ function update() {
 
     // ためた値の中央値を伝える
     // （ステップD：音量と、なめらかにする前のその回の値も一緒に伝える）
-    listener(calculateMedian(history), rms, detected);
+    // （2026/11/23：1オクターブ上に直したかどうかも伝える）
+    listener(calculateMedian(history), rms, detected, octaveFixed);
   }
 
   // 次の描画のタイミングで、もう一度この関数を呼ぶ
@@ -311,4 +360,5 @@ export function stopMicrophone() {
   waveform = null;
   history = [];
   listener = null;
+  pitchTarget = null; // 目標も消す（2026/11/23 追加）
 }

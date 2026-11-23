@@ -7,6 +7,7 @@
       線（黒）   … なめらかにした値（判定に使っている値）のズレ
       緑の帯     … OK の範囲
       赤い点     … 50セントより大きく外れた値（1オクターブ違いなど。グラフの上か下の端に出す）
+      橙の点     … 1オクターブ下と測ったのを、目標の高さに直した値（2026/11/23 追加）
       下の段の印 … 音が出ていない（null）と判定された時
       灰色の背景 … 判定を止めていた時（お手本の音・次へ進んだ直後の待ち時間など）
       縦線       … ゲージが0に戻った時（赤の点線）・通過した時（緑）
@@ -20,7 +21,7 @@
   //   now       … 押した時刻（ミリ秒）。グラフの右の端になる
   //   duration  … グラフに出す時間の長さ（ミリ秒）
   //   tolerance … OK の範囲（セント）
-  //   frames    … 毎回の値 [{ time, raw, smooth, paused }, ...]（古いものが前）
+  //   frames    … 毎回の値 [{ time, raw, smooth, paused, fixed }, ...]（古いものが前）
   //   events    … 「戻る／通過」が起きた時刻 [{ time, result }, ...]
   //   lines     … 「戻る／通過」の行 [{ clock, text }, ...]（新しいものが前）
   // onclose ：［閉じる］を押したときに呼ぶ関数
@@ -132,6 +133,8 @@
   // 数えた回数（グラフの下に出す。グラフを見なくても、ざっと分かるように）
   let nullCount = $derived(snapshot.frames.filter((frame) => frame.raw === null).length);
   let farCount = $derived(snapshot.frames.filter((frame) => frame.raw !== null && Math.abs(frame.raw) > FAR_CENTS).length);
+  // 1オクターブ上に直した回数（2026/11/23 追加）
+  let fixedCount = $derived(snapshot.frames.filter((frame) => frame.fixed).length);
 
   // 縦の目盛り（セント）
   const CENTS_TICKS = [50, 25, 0, -25, -50];
@@ -184,12 +187,14 @@
       />
     {/each}
 
-    <!-- 毎回の値：生の値の点（青）、大きく外れた値（赤）、音が出ていない印（灰色） -->
+    <!-- 毎回の値：生の値の点（青）、大きく外れた値（赤）、1オクターブ上に直した値（橙）、音が出ていない印（灰色） -->
     {#each snapshot.frames as frame, i (i)}
       {#if frame.raw === null}
         <rect x={toX(frame.time) - 0.75} y={NULL_TOP} width="1.5" height={NULL_HEIGHT} fill="#757575" />
       {:else if Math.abs(frame.raw) > FAR_CENTS}
         <circle cx={toX(frame.time)} cy={toY(frame.raw)} r="2.5" fill="#d32f2f" />
+      {:else if frame.fixed}
+        <circle cx={toX(frame.time)} cy={toY(frame.raw)} r="2" fill="#ef6c00" />
       {:else}
         <circle cx={toX(frame.time)} cy={toY(frame.raw)} r="1.5" fill="#1976d2" opacity="0.6" />
       {/if}
@@ -206,7 +211,7 @@
 
   <!-- グラフの読み方と、数えた回数 -->
   <p class="legend">
-    点＝その回の値／線＝判定に使う値／緑＝OK／赤い点＝50セント超え（{farCount}回）／下の段＝null（{nullCount}回）／灰色＝判定を止めていた時／縦線＝戻る（赤）・通過（緑）
+    点＝その回の値／線＝判定に使う値／緑＝OK／赤い点＝50セント超え（{farCount}回）／橙の点＝1オクターブ直し（{fixedCount}回）／下の段＝null（{nullCount}回）／灰色＝判定を止めていた時／縦線＝戻る（赤）・通過（緑）
   </p>
 
   <!-- 直近10回の「戻る／通過」の行（新しいものが上） -->

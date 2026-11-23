@@ -31,6 +31,16 @@ const MIN_CLARITY = 0.8;
 //   補った頂上の高さで比べると、ド3〜ド7 のすべての音で外れがなくなった（計算で試した結果）
 const PEAK_RATIO = 0.985;
 
+// 【2026/11/23 追加（A線の音が1オクターブ下と測られる不具合の直し）】
+// 選んだ周期の「半分」の位置にも山があり、その高さが一番高い山のこの割合以上なら、
+// 「1オクターブ上の音とも取れた」として、その高さも一緒に返す（上の候補）。
+//   実機（タブレット）の記録で、A線の ラ4・シ4 を弾くと、ときどき ラ3・シ3（1オクターブ下）と測っていた。
+//   PEAK_RATIO（0.985）にわずかに届かず、周期の2倍の位置の山を選んでいたと考えられる。
+//   ここでは選び方は変えずに、上の候補を返すだけにする。どちらを採るかは、目標の音が分かっている練習のときに
+//   microphone.js で決める（目標の約1オクターブ下を測って、上の候補が目標に近いときだけ、上の候補を採る）。
+//   ド3 の直し（PEAK_RATIO）は、そのまま効く。
+const UPPER_CANDIDATE_RATIO = 0.9;
+
 /**
  * 音の大きさ（RMS）を計算する関数
  * RMS は「二乗平均平方根」のことで、波形の振れ幅の平均的な大きさを表す。
@@ -79,13 +89,28 @@ function estimatePeakHeight(similarity, peakLag) {
 
 /**
  * 波形データから周波数を検出する関数
- * 波形を少しずつずらして元の波形と比べ、一番よく重なるずらし幅（周期）を探す。
- * 周期が分かれば「1秒あたりのデータ数 ÷ 周期」で周波数が求まる。
+ * （2026/11/23 変更：中身は detectPitchWithCandidate に移した。周波数だけが欲しいときは、今までどおりこちらを使う）
  * @param {Float32Array} data - 波形データ（-1 〜 1 の値が並んだ配列）
  * @param {number} sampleRate - 1秒あたりのデータ数（例：48000）
  * @returns {number|null} 検出した周波数（Hz）。検出できなかったときは null
  */
 export function detectPitch(data, sampleRate) {
+  const result = detectPitchWithCandidate(data, sampleRate);
+  return result === null ? null : result.frequency;
+}
+
+/**
+ * 波形データから周波数と、1オクターブ上の候補を検出する関数（2026/11/23 detectPitch から名前を変えて、上の候補も返すようにした）
+ * 波形を少しずつずらして元の波形と比べ、一番よく重なるずらし幅（周期）を探す。
+ * 周期が分かれば「1秒あたりのデータ数 ÷ 周期」で周波数が求まる。
+ * @param {Float32Array} data - 波形データ（-1 〜 1 の値が並んだ配列）
+ * @param {number} sampleRate - 1秒あたりのデータ数（例：48000）
+ * @returns {{frequency: number, upperFrequency: number|null}|null}
+ *   frequency：検出した周波数（Hz）
+ *   upperFrequency：1オクターブ上の音とも取れたときの、その周波数（Hz）。取れなかったときは null
+ *   検出できなかったときは、全体が null
+ */
+export function detectPitchWithCandidate(data, sampleRate) {
   // ----- 手順1：音が小さすぎるときは検出しない -----
   if (calculateRms(data) < MIN_RMS) {
     return null;
@@ -175,35 +200,66 @@ export function detectPitch(data, sampleRate) {
   // 一番高い山ではなく「最初の十分に高い山」を選ぶことで、
   // 周期の2倍・3倍の位置にある山（1オクターブ低い音）と間違えるのを防ぐ
   // （2026/11/10 変更：山の高さは、整数の位置の値ではなく、補った頂上の高さ（peakHeights）で比べる）
-  let bestLag = peakLags[0];
+  // （2026/11/23 変更：上の候補を探すために、選んだ山が何番目かも覚えておく）
+  let bestIndex = 0;
   for (let i = 0; i < peakLags.length; i++) {
     if (peakHeights[i] >= highestPeak * PEAK_RATIO) {
-      bestLag = peakLags[i];
+      bestIndex = i;
       break;
     }
   }
+  const bestLag = peakLags[bestIndex];
 
-  // ----- 手順7：山の頂上の位置を、より細かく求める -----
-  // ずらし幅は整数（1個、2個…）でしか調べられないが、本当の頂上はその間にあることが多い。
-  // 頂上とその両隣の3点を通る放物線を考えて、本当の頂上の位置を小数で求める
-  const left = similarity[bestLag - 1];
-  const center = similarity[bestLag];
-  const right = similarity[bestLag + 1];
-  const denominator = 2 * (left - 2 * center + right);
-
-  // 補正後の周期（小数）
-  let period = bestLag;
-  if (denominator !== 0) {
-    period = bestLag + (left - right) / denominator;
-  }
-
-  // ----- 手順8：周期から周波数を計算する -----
-  const frequency = sampleRate / period;
+  // ----- 手順7・8：山の頂上の位置を細かく求めて、周波数を計算する -----
+  // （2026/11/23 変更：上の候補でも同じ計算をするので、lagToFrequency に移した）
+  const frequency = lagToFrequency(similarity, bestLag, sampleRate);
 
   // ----- 手順9：ビオラの音域から外れた結果は捨てる -----
   if (frequency < MIN_FREQUENCY || frequency > MAX_FREQUENCY) {
     return null;
   }
 
-  return frequency;
+  // ----- 手順10：1オクターブ上の候補を探す（2026/11/23 追加） -----
+  // 選んだ山より前（ずらし幅が小さい側）の山のうち、ずらし幅がほぼ半分で、十分に高いものがあれば、上の候補にする
+  let upperFrequency = null;
+  for (let i = 0; i < bestIndex; i++) {
+    // ずらし幅の2倍と、選んだずらし幅との差（整数の位置で測っているので、少しの差は許す）
+    const difference = Math.abs(peakLags[i] * 2 - bestLag);
+    const allowed = Math.max(2, bestLag * 0.03);
+
+    if (difference <= allowed && peakHeights[i] >= highestPeak * UPPER_CANDIDATE_RATIO) {
+      const candidate = lagToFrequency(similarity, peakLags[i], sampleRate);
+      if (candidate >= MIN_FREQUENCY && candidate <= MAX_FREQUENCY) {
+        upperFrequency = candidate;
+      }
+      break;
+    }
+  }
+
+  return { frequency: frequency, upperFrequency: upperFrequency };
+}
+
+/**
+ * 山の頂上の位置（ずらし幅）を細かく求めて、周波数にする関数（2026/11/23 detectPitchWithCandidate の手順7・8を移した）
+ * ずらし幅は整数（1個、2個…）でしか調べられないが、本当の頂上はその間にあることが多い。
+ * 頂上とその両隣の3点を通る放物線を考えて、本当の頂上の位置を小数で求め、周波数を計算する。
+ * @param {Float32Array} similarity - ずらし幅ごとの重なり具合（-1 〜 1）
+ * @param {number} lag - 山の一番高い点のずらし幅（両隣があること）
+ * @param {number} sampleRate - 1秒あたりのデータ数
+ * @returns {number} 周波数（Hz）
+ */
+function lagToFrequency(similarity, lag, sampleRate) {
+  const left = similarity[lag - 1];
+  const center = similarity[lag];
+  const right = similarity[lag + 1];
+  const denominator = 2 * (left - 2 * center + right);
+
+  // 補正後の周期（小数）
+  let period = lag;
+  if (denominator !== 0) {
+    period = lag + (left - right) / denominator;
+  }
+
+  // 周期から周波数を計算する（1秒あたりのデータ数 ÷ 周期）
+  return sampleRate / period;
 }

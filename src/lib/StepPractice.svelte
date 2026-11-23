@@ -38,7 +38,8 @@
   import { playTone, stopTone, playChime } from "#lib/audio.js";
 
   // マイクの音の高さを調べはじめる関数と、やめる関数を読み込む
-  import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
+  // （2026/11/23：目標の音をマイクに教える関数 setPitchTarget も読み込む。1オクターブ下と測り間違えたときに直すため）
+  import { startMicrophone, stopMicrophone, setPitchTarget } from "#lib/microphone.js";
 
   // ズレ（セント）を「+3」「−8」のような表示用の文字にする関数と、
   // 周波数から一番近い音名を求める関数を読み込む
@@ -248,6 +249,12 @@
     stopTone();
   });
 
+  // 聴いている間は、今の目標の音をマイクに教える（2026/11/23 追加：1オクターブ下と測り間違えたときに直すため）
+  // $effect の中で使っている値（isListening・targetFrequency）が変わるたびに、自動で実行される
+  $effect(() => {
+    setPitchTarget(isListening ? targetFrequency : null);
+  });
+
   // 判定のレベルが切り替わって OK の範囲が変わったら、数えていた時間を最初に戻す
   // $effect の中で使っている値（tolerance）が変わるたびに、自動で実行される
   $effect(() => {
@@ -318,14 +325,15 @@
    * @param {number|null} frequency - 検出した周波数（Hz）。音が出ていないときは null
    * @param {number} rms - 【仮】音量（0 に近いほど静か）。記録に使う
    * @param {number|null} rawFrequency - 【仮】なめらかにする前の、その回の周波数（Hz）。検出できないときは null。記録に使う
+   * @param {boolean} octaveFixed - 【仮】その回の値を、マイクのほうで1オクターブ上に直したか（true：直した）。記録に使う
    */
-  function handlePitch(frequency, rms, rawFrequency) {
+  function handlePitch(frequency, rms, rawFrequency, octaveFixed) {
     // 今の時刻（ページを開いてからのミリ秒）
     const now = performance.now();
 
     // 【仮】この回の値を、記録のグラフ用にためておく
     // 判定を止めている間（お手本の音・次へ進んだ直後の待ち時間・音が途切れるのを待っている間・最後まで弾けたあと）かどうかも一緒に覚える
-    recordFrame(now, frequency, rms, rawFrequency, now < muteUntil || now < waitUntil || needRelease || isFinished);
+    recordFrame(now, frequency, rms, rawFrequency, now < muteUntil || now < waitUntil || needRelease || isFinished, octaveFixed);
 
     // お手本の音を鳴らしている間は、音が出ていないことにして、何も数えない
     if (now < muteUntil) {
@@ -374,7 +382,7 @@
       }
 
       // 【仮】この回の値を記録に数える
-      addHoldStats(frequency, rms, rawFrequency);
+      addHoldStats(frequency, rms, rawFrequency, octaveFixed);
 
       // 最後に OK だった時刻を更新する
       lastOkTime = now;
@@ -389,7 +397,7 @@
     } else {
       // 【仮】ゲージがたまっている途中なら、OK でない回も記録に数える
       if (holdStartTime !== null) {
-        addHoldStats(frequency, rms, rawFrequency);
+        addHoldStats(frequency, rms, rawFrequency, octaveFixed);
       }
 
       if (holdStartTime !== null && now - lastOkTime > GRACE_MILLISECONDS) {
@@ -421,6 +429,7 @@
   //   farCount     ：目標から 50セントより大きく外れた回数（1オクターブ違いなどを一瞬拾った）
   //   farName      ：大きく外れたときの音名（最初の1回だけ。例："ミ4"）
   //   outCount     ：OK の範囲の外だけど、50セント以内だった回数（ふらつき）
+  //   fixedCount   ：マイクのほうで、1オクターブ下を目標の高さに直した回数（2026/11/23 追加：直しが効いているかを見るため）
   //   rawMin / rawMax       ：なめらかにする前の値のズレ（セント）の、いちばん低い値・高い値（大きく外れた値は除く）
   //   smoothMin / smoothMax ：なめらかにした値（判定に使っている値）のズレ（セント）の、いちばん低い値・高い値
   let holdStats = null;
@@ -438,6 +447,7 @@
       farCount: 0,
       farName: "",
       outCount: 0,
+      fixedCount: 0,
       rawMin: Infinity,
       rawMax: -Infinity,
       smoothMin: Infinity,
@@ -450,13 +460,19 @@
    * @param {number|null} frequency - なめらかにした周波数（判定に使っている値）。音が出ていないときは null
    * @param {number} rms - 音量
    * @param {number|null} rawFrequency - なめらかにする前の、その回の周波数。検出できないときは null
+   * @param {boolean} octaveFixed - その回の値を、1オクターブ上に直したか
    */
-  function addHoldStats(frequency, rms, rawFrequency) {
+  function addHoldStats(frequency, rms, rawFrequency, octaveFixed) {
     if (holdStats === null) {
       return;
     }
 
     holdStats.frames++;
+
+    // 1オクターブ上に直した回数
+    if (octaveFixed) {
+      holdStats.fixedCount++;
+    }
 
     // なめらかにした値のズレの、いちばん低い値・高い値
     const smoothCents = getCentsOf(frequency);
@@ -505,7 +521,7 @@
 
   // 直近3秒の、毎回の値（古いものが前）
   //   [{ time: 時刻（ミリ秒）, raw: 生の値のズレ（セント。null は音が出ていない）, smooth: 判定に使っている値のズレ（null あり）,
-  //      paused: 判定を止めていたか }, ...]
+  //      paused: 判定を止めていたか, fixed: 1オクターブ上に直した値か }, ...]
   let frameLog = [];
 
   // 直近3秒の「戻る／通過」が起きた時刻（グラフに縦線を引くため。古いものが前）
@@ -528,13 +544,15 @@
    * @param {number} rms - 音量（今は使わないが、あとで見たくなったときのために受け取っておく）
    * @param {number|null} rawFrequency - なめらかにする前の、その回の周波数
    * @param {boolean} paused - 判定を止めていたか
+   * @param {boolean} octaveFixed - その回の値を、1オクターブ上に直したか
    */
-  function recordFrame(now, frequency, rms, rawFrequency, paused) {
+  function recordFrame(now, frequency, rms, rawFrequency, paused, octaveFixed) {
     frameLog.push({
       time: now,
       raw: getCentsOf(rawFrequency ?? null),
       smooth: getCentsOf(frequency),
       paused: paused,
+      fixed: octaveFixed === true,
     });
 
     // 3秒より古い値を、前から順に捨てる
@@ -586,7 +604,7 @@
 
   /**
    * 【仮】数えた値を、「戻る／通過」の行としてためておく関数
-   * 例：「ラ4 戻る 0.32秒｜全30回｜null 4回（音量0.006〜0.010）｜外れ 1回（ラ3）｜範囲外 9回｜生 −18〜+6｜ならし −12〜+4」
+   * 例：「ラ4 戻る 0.32秒｜全30回｜null 4回（音量0.006〜0.010）｜外れ 1回（ラ3）｜直し 5回｜範囲外 9回｜生 −18〜+6｜ならし −12〜+4」
    * グラフに縦線を引くために、起きた時刻もためておく。
    * @param {string} result - "戻る"（ゲージが0に戻った）か "通過"
    * @param {number} seconds - OK を保てていた時間（秒）
@@ -609,6 +627,7 @@
       "全" + s.frames + "回",
       "null " + s.nullCount + "回" + (s.nullCount > 0 ? "（音量" + s.nullRmsMin.toFixed(3) + "〜" + s.nullRmsMax.toFixed(3) + "）" : ""),
       "外れ " + s.farCount + "回" + (s.farCount > 0 ? "（" + s.farName + "）" : ""),
+      "直し " + s.fixedCount + "回",
       "範囲外 " + s.outCount + "回",
       "生 " + range(s.rawMin, s.rawMax),
       "ならし " + range(s.smoothMin, s.smoothMax),

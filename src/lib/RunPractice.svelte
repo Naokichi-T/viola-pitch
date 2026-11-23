@@ -22,7 +22,8 @@
   import { centsToPoints, getTotalScore } from "#lib/scoring.js";
 
   // マイクで音の高さを調べはじめる関数と、止める関数を読み込む
-  import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
+  // （2026/11/23：目標の音をマイクに教える関数 setPitchTarget も読み込む。1オクターブ下と測り間違えたときに直すため）
+  import { startMicrophone, stopMicrophone, setPitchTarget } from "#lib/microphone.js";
 
   // メトロノームの音を鳴らす関数と、合図の音を鳴らす関数を読み込む
   import { playClick, playChime } from "#lib/audio.js";
@@ -182,6 +183,17 @@
   // この部品が画面から消えるとき（別のモードに切り替えたときや、ページを離れたとき）に、進行を止める
   onDestroy(() => {
     stop();
+  });
+
+  // 今鳴っているはずの音を、目標の音としてマイクに教える（2026/11/23 追加：1オクターブ下と測り間違えたときに直すため）
+  // 演奏中でないときや、休符の間（currentIndex が null）は、目標なし（null）にする
+  // $effect の中で使っている値（currentIndex・調・音律）が変わるたびに、自動で実行される
+  $effect(() => {
+    if (currentIndex !== null && notes[currentIndex] !== undefined) {
+      setPitchTarget(getFrequency(notes[currentIndex], currentKey, temperamentId));
+    } else {
+      setPitchTarget(null);
+    }
   });
 
   /**

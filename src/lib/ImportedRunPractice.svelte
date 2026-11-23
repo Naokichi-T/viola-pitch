@@ -67,7 +67,8 @@
   import { findOnset, isClickNoise } from "#lib/rhythm.js";
 
   // マイクで音の高さを調べはじめる関数と、止める関数を読み込む
-  import { startMicrophone, stopMicrophone } from "#lib/microphone.js";
+  // （2026/11/23：目標の音をマイクに教える関数 setPitchTarget も読み込む。1オクターブ下と測り間違えたときに直すため）
+  import { startMicrophone, stopMicrophone, setPitchTarget } from "#lib/microphone.js";
 
   // メトロノームの音を鳴らす関数と、合図の音を鳴らす関数を読み込む
   // （ステップC-2：演奏中のメトロノームのために、時刻を決めてクリックを鳴らす関数と、音の時計の今の時刻を返す関数も読み込む）
@@ -510,6 +511,17 @@
   // この部品が画面から消えるときに、進行を止める
   onDestroy(() => {
     stop();
+  });
+
+  // 今鳴っているはずの音を、目標の音としてマイクに教える（2026/11/23 追加：1オクターブ下と測り間違えたときに直すため）
+  // 演奏中でないときや、休符の間（currentIndex が null）は、目標なし（null）にする
+  // $effect の中で使っている値（currentIndex・調・音律）が変わるたびに、自動で実行される
+  $effect(() => {
+    if (currentIndex !== null && runTimeline !== null && runTimeline.items[currentIndex] !== undefined) {
+      setPitchTarget(getFrequency(runTimeline.items[currentIndex].note, currentKey, temperamentId));
+    } else {
+      setPitchTarget(null);
+    }
   });
 
   /**
