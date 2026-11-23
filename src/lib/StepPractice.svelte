@@ -27,7 +27,8 @@
   import { noteToText } from "#lib/score.js";
 
   // 周波数や、平均律からのズレを計算する関数と、開放弦の周波数を返す関数を読み込む
-  import { getFrequency, getCentsFromEqual, getOpenStringFrequency } from "#lib/tuning.js";
+  // （【仮】記録の画面に音律の名前を出すために、音律のデータを探す関数 getTemperament も読み込む）
+  import { getFrequency, getCentsFromEqual, getOpenStringFrequency, getTemperament } from "#lib/tuning.js";
 
   // 合図の音の設定を、ブラウザから読み込む関数と、ブラウザに保存する関数を読み込む
   // （外したら正しい音を鳴らす：正しい音を鳴らすかどうかの設定も読み込む）
@@ -48,6 +49,9 @@
 
   // ズレを表示するメーターの部品を読み込む
   import Meter from "#lib/Meter.svelte";
+
+  // 【仮】判定の記録を見せる部品を読み込む（A線の音の判定が切れる原因を調べるため。原因がわかったら消す）
+  import JudgeLog from "#lib/JudgeLog.svelte";
 
   // この部品を使う側（練習ページ）から受け取る値
   // notes         ：練習する楽譜の音の並び（音のデータの配列。1つ以上入っていること）
@@ -192,14 +196,24 @@
   // 今弾いている音が、目標の音から何セントずれているか。プラスは高い、マイナスは低い
   // 音が出ていないときは null
   // $derived.by は、何行かの計算の結果を入れておきたいときに使う
-  let cents = $derived.by(() => {
+  // 【仮】中身の計算は getCentsOf に移した（記録で、なめらかにする前の値のズレも同じ計算で求めるため）。結果は今までと同じ
+  let cents = $derived(getCentsOf(detectedFrequency));
+
+  /**
+   * 周波数が、今の目標の音から何セントずれているかを求める関数
+   * 「開放弦の高さで弾いた音もOKにする」ときは、開放弦の高さとのずれと比べて、小さいほうを返す。
+   * （【仮】もとは cents の中に書いていた計算。記録でも使うために関数にした）
+   * @param {number|null} frequency - 周波数（Hz）。音が出ていないときは null
+   * @returns {number|null} ずれ（セント）。プラスは高い、マイナスは低い。音が出ていないときは null
+   */
+  function getCentsOf(frequency) {
     // 音が出ていないときは null
-    if (detectedFrequency === null) {
+    if (frequency === null) {
       return null;
     }
 
     // 音律での高さとのずれ。周波数の比を、セントに変換する（周波数が2倍で1200セント）
-    const targetCents = 1200 * Math.log2(detectedFrequency / targetFrequency);
+    const targetCents = 1200 * Math.log2(frequency / targetFrequency);
 
     // 開放弦の高さとは比べないとき：音律での高さとのずれを、そのまま使う
     if (openFrequency === null) {
@@ -207,11 +221,11 @@
     }
 
     // 開放弦の高さとのずれ
-    const openCents = 1200 * Math.log2(detectedFrequency / openFrequency);
+    const openCents = 1200 * Math.log2(frequency / openFrequency);
 
     // ずれが小さいほうを採用する（Math.abs は、マイナスを取って「ずれの大きさ」にする）
     return Math.abs(openCents) < Math.abs(targetCents) ? openCents : targetCents;
-  });
+  }
 
   // 判定の結果。次の4つのどれかが入る
   //   'none'：音が出ていない
@@ -302,10 +316,16 @@
    * マイクで音の高さが分かるたびに呼ばれる関数（1秒に約60回）
    * 検出した音を画面に反映し、OK を保てている時間を数えて、十分に保てたら次の音へ進む。
    * @param {number|null} frequency - 検出した周波数（Hz）。音が出ていないときは null
+   * @param {number} rms - 【仮】音量（0 に近いほど静か）。記録に使う
+   * @param {number|null} rawFrequency - 【仮】なめらかにする前の、その回の周波数（Hz）。検出できないときは null。記録に使う
    */
-  function handlePitch(frequency) {
+  function handlePitch(frequency, rms, rawFrequency) {
     // 今の時刻（ページを開いてからのミリ秒）
     const now = performance.now();
+
+    // 【仮】この回の値を、記録のグラフ用にためておく
+    // 判定を止めている間（お手本の音・次へ進んだ直後の待ち時間・音が途切れるのを待っている間・最後まで弾けたあと）かどうかも一緒に覚える
+    recordFrame(now, frequency, rms, rawFrequency, now < muteUntil || now < waitUntil || needRelease || isFinished);
 
     // お手本の音を鳴らしている間は、音が出ていないことにして、何も数えない
     if (now < muteUntil) {
@@ -350,7 +370,11 @@
       // OK のとき：OK になりはじめた時刻を覚える（すでに覚えていれば、そのまま）
       if (holdStartTime === null) {
         holdStartTime = now;
+        startHoldStats(); // 【仮】ゲージがたまり始めたので、記録の数え始め
       }
+
+      // 【仮】この回の値を記録に数える
+      addHoldStats(frequency, rms, rawFrequency);
 
       // 最後に OK だった時刻を更新する
       lastOkTime = now;
@@ -362,9 +386,19 @@
       if (holdProgress >= 1) {
         passTarget();
       }
-    } else if (holdStartTime !== null && now - lastOkTime > GRACE_MILLISECONDS) {
-      // OK から外れて、見逃す時間も過ぎたとき：最初から数え直す
-      resetHold();
+    } else {
+      // 【仮】ゲージがたまっている途中なら、OK でない回も記録に数える
+      if (holdStartTime !== null) {
+        addHoldStats(frequency, rms, rawFrequency);
+      }
+
+      if (holdStartTime !== null && now - lastOkTime > GRACE_MILLISECONDS) {
+        // 【仮】ゲージが0に戻る理由を、記録の画面に出す行としてためておく
+        logHoldStats("戻る", (lastOkTime - holdStartTime) / 1000);
+
+        // OK から外れて、見逃す時間も過ぎたとき：最初から数え直す
+        resetHold();
+      }
     }
   }
 
@@ -374,6 +408,214 @@
   function resetHold() {
     holdStartTime = null;
     holdProgress = 0;
+    holdStats = null; // 【仮】記録の数えた値も消す（記録は残さない）
+  }
+
+  // ===== 【仮】判定の記録（A線の音の判定が切れる原因を調べるため。原因がわかったら、ここから下の【仮】の部分は消す） =====
+
+  // ゲージがたまり始めてから数えた値。たまっていないときは null
+  //   frames       ：数えた回数（1秒に約60回）
+  //   nullCount    ：音が出ていない（null）と判定された回数（なめらかにする前の値で数える）
+  //   nullRmsMin / nullRmsMax ：null だった回の音量の、いちばん小さい値・大きい値
+  //                  （音量が 0.004 以上なのに null なら、音は出ているのに波の繰り返しがはっきりしなかった、ということ）
+  //   farCount     ：目標から 50セントより大きく外れた回数（1オクターブ違いなどを一瞬拾った）
+  //   farName      ：大きく外れたときの音名（最初の1回だけ。例："ミ4"）
+  //   outCount     ：OK の範囲の外だけど、50セント以内だった回数（ふらつき）
+  //   rawMin / rawMax       ：なめらかにする前の値のズレ（セント）の、いちばん低い値・高い値（大きく外れた値は除く）
+  //   smoothMin / smoothMax ：なめらかにした値（判定に使っている値）のズレ（セント）の、いちばん低い値・高い値
+  let holdStats = null;
+
+  /**
+   * 【仮】記録の数え始めの関数
+   * ゲージがたまり始めたときに呼ぶ。
+   */
+  function startHoldStats() {
+    holdStats = {
+      frames: 0,
+      nullCount: 0,
+      nullRmsMin: Infinity,
+      nullRmsMax: 0,
+      farCount: 0,
+      farName: "",
+      outCount: 0,
+      rawMin: Infinity,
+      rawMax: -Infinity,
+      smoothMin: Infinity,
+      smoothMax: -Infinity,
+    };
+  }
+
+  /**
+   * 【仮】1回分の値を記録に数える関数
+   * @param {number|null} frequency - なめらかにした周波数（判定に使っている値）。音が出ていないときは null
+   * @param {number} rms - 音量
+   * @param {number|null} rawFrequency - なめらかにする前の、その回の周波数。検出できないときは null
+   */
+  function addHoldStats(frequency, rms, rawFrequency) {
+    if (holdStats === null) {
+      return;
+    }
+
+    holdStats.frames++;
+
+    // なめらかにした値のズレの、いちばん低い値・高い値
+    const smoothCents = getCentsOf(frequency);
+    if (smoothCents !== null) {
+      holdStats.smoothMin = Math.min(holdStats.smoothMin, smoothCents);
+      holdStats.smoothMax = Math.max(holdStats.smoothMax, smoothCents);
+    }
+
+    // なめらかにする前の値が null（音が出ていない）のとき：回数と音量を数える
+    if (rawFrequency === null || rawFrequency === undefined) {
+      holdStats.nullCount++;
+      holdStats.nullRmsMin = Math.min(holdStats.nullRmsMin, rms);
+      holdStats.nullRmsMax = Math.max(holdStats.nullRmsMax, rms);
+      return;
+    }
+
+    const rawCents = getCentsOf(rawFrequency);
+
+    // 大きく外れた値（1オクターブ違いなど）：回数と、最初の1回の音名を覚える
+    if (Math.abs(rawCents) > METER_RANGE) {
+      holdStats.farCount++;
+      if (holdStats.farName === "") {
+        const note = frequencyToNote(rawFrequency);
+        holdStats.farName = note.name + note.octave;
+      }
+      return;
+    }
+
+    // OK の範囲の外（ふらつき）の回数
+    if (Math.abs(rawCents) > tolerance) {
+      holdStats.outCount++;
+    }
+
+    // なめらかにする前の値のズレの、いちばん低い値・高い値
+    holdStats.rawMin = Math.min(holdStats.rawMin, rawCents);
+    holdStats.rawMax = Math.max(holdStats.rawMax, rawCents);
+  }
+
+  // ----- 【仮】記録の画面に見せるためにためておく値 -----
+
+  // グラフに出す時間の長さ（ミリ秒）。押す直前の3秒ぶん
+  const LOG_FRAME_MILLISECONDS = 3000;
+
+  // 「戻る／通過」の行を、いくつまでためておくか
+  const LOG_LINE_MAX = 10;
+
+  // 直近3秒の、毎回の値（古いものが前）
+  //   [{ time: 時刻（ミリ秒）, raw: 生の値のズレ（セント。null は音が出ていない）, smooth: 判定に使っている値のズレ（null あり）,
+  //      paused: 判定を止めていたか }, ...]
+  let frameLog = [];
+
+  // 直近3秒の「戻る／通過」が起きた時刻（グラフに縦線を引くため。古いものが前）
+  //   [{ time: 時刻（ミリ秒）, result: "戻る" か "通過" }, ...]
+  let eventLog = [];
+
+  // 「戻る／通過」の行（新しいものが前。LOG_LINE_MAX 個まで）
+  //   [{ clock: "19:13:05", text: "ラ4 戻る 0.32秒｜…" }, ...]
+  let holdLines = [];
+
+  // 記録の画面に出す、押した瞬間の記録のコピー。画面を閉じているときは null
+  // （3. A：開いている間は記録を止めて、押した瞬間のものを見せる。そのためにコピーを作る）
+  let logSnapshot = $state(null);
+
+  /**
+   * 【仮】1回分の値を、グラフ用にためておく関数
+   * 3秒より古い値は捨てる。
+   * @param {number} now - 今の時刻（ミリ秒）
+   * @param {number|null} frequency - なめらかにした周波数（判定に使っている値）
+   * @param {number} rms - 音量（今は使わないが、あとで見たくなったときのために受け取っておく）
+   * @param {number|null} rawFrequency - なめらかにする前の、その回の周波数
+   * @param {boolean} paused - 判定を止めていたか
+   */
+  function recordFrame(now, frequency, rms, rawFrequency, paused) {
+    frameLog.push({
+      time: now,
+      raw: getCentsOf(rawFrequency ?? null),
+      smooth: getCentsOf(frequency),
+      paused: paused,
+    });
+
+    // 3秒より古い値を、前から順に捨てる
+    while (frameLog.length > 0 && frameLog[0].time < now - LOG_FRAME_MILLISECONDS) {
+      frameLog.shift();
+    }
+    while (eventLog.length > 0 && eventLog[0].time < now - LOG_FRAME_MILLISECONDS) {
+      eventLog.shift();
+    }
+  }
+
+  /**
+   * 【仮】記録の画面を開く関数
+   * ［判定の記録］ボタンを押したときに呼ばれる。押した瞬間の記録をコピーして、画面に出す。
+   */
+  function openJudgeLog() {
+    // 今の目標の音・調・音律・判定のレベル（OK の範囲）を1行にまとめる
+    const info = [
+      "目標 " + noteToText(targetNote) + "（" + targetFrequency.toFixed(1) + " Hz）",
+      currentKey.name,
+      getTemperament(temperamentId).name,
+      "OK ±" + tolerance + "セント",
+      allowOpenString ? "開放弦の高さもOK" : "",
+    ]
+      .filter((text) => text !== "")
+      .join("／");
+
+    logSnapshot = {
+      info: info,
+      now: performance.now(),
+      duration: LOG_FRAME_MILLISECONDS,
+      tolerance: tolerance,
+      // 配列をコピーしておく（開いている間に、元の配列が増えても、画面は変わらないように）
+      frames: frameLog.map((frame) => ({ ...frame })),
+      events: eventLog.map((event) => ({ ...event })),
+      lines: holdLines.map((line) => ({ ...line })),
+    };
+  }
+
+  /**
+   * 【仮】今の時刻を「時:分:秒」の文字にする関数（例："19:13:05"）
+   * @returns {string}
+   */
+  function clockText() {
+    const date = new Date();
+    const two = (n) => String(n).padStart(2, "0");
+    return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+  }
+
+  /**
+   * 【仮】数えた値を、「戻る／通過」の行としてためておく関数
+   * 例：「ラ4 戻る 0.32秒｜全30回｜null 4回（音量0.006〜0.010）｜外れ 1回（ラ3）｜範囲外 9回｜生 −18〜+6｜ならし −12〜+4」
+   * グラフに縦線を引くために、起きた時刻もためておく。
+   * @param {string} result - "戻る"（ゲージが0に戻った）か "通過"
+   * @param {number} seconds - OK を保てていた時間（秒）
+   */
+  function logHoldStats(result, seconds) {
+    if (holdStats === null) {
+      return;
+    }
+
+    // グラフの縦線用に、起きた時刻を覚える
+    eventLog.push({ time: performance.now(), result: result });
+
+    const s = holdStats;
+
+    // ズレの範囲を「−18〜+6」の形にする（1回もなかったときは「なし」）
+    const range = (min, max) => (min === Infinity ? "なし" : formatCents(min) + "〜" + formatCents(max));
+
+    const parts = [
+      noteToText(targetNote) + " " + result + " " + seconds.toFixed(2) + "秒",
+      "全" + s.frames + "回",
+      "null " + s.nullCount + "回" + (s.nullCount > 0 ? "（音量" + s.nullRmsMin.toFixed(3) + "〜" + s.nullRmsMax.toFixed(3) + "）" : ""),
+      "外れ " + s.farCount + "回" + (s.farCount > 0 ? "（" + s.farName + "）" : ""),
+      "範囲外 " + s.outCount + "回",
+      "生 " + range(s.rawMin, s.rawMax),
+      "ならし " + range(s.smoothMin, s.smoothMax),
+    ];
+
+    // 新しい行を前に足して、LOG_LINE_MAX 個を超えた古い行は捨てる
+    holdLines = [{ clock: clockText(), text: parts.join("｜") }, ...holdLines].slice(0, LOG_LINE_MAX);
   }
 
   /**
@@ -521,6 +763,9 @@
   function passTarget() {
     // 今の音に、通過した印を付ける（五線譜の音符が緑になる）
     passed[targetIndex] = true;
+
+    // 【仮】通過したときの値も、比べるために記録に残す（resetHold で消える前に）
+    logHoldStats("通過", (performance.now() - holdStartTime) / 1000);
 
     // 数えていた時間を最初に戻す
     resetHold();
@@ -685,6 +930,9 @@
   // 「前」「目標の音を聴く」「次」の行の要素（いちばん下に収めたいもの）
   let moveRow = $state(null);
 
+  // 【仮】［判定の記録］ボタンの行の要素（聴いているときだけある）。あるときは、この行までを1画面に収める
+  let logRow = $state(null);
+
   // 五線譜の枠と、ボタンの行の下の端との間に、少しだけあけるすき間（ピクセル）
   const FIT_BOTTOM_GAP = 12;
 
@@ -706,7 +954,8 @@
     const viewHeight = window.visualViewport?.height ?? window.innerHeight;
     const topRect = practiceTop.getBoundingClientRect();
     const staffRect = staffElement.getBoundingClientRect();
-    const rowRect = moveRow.getBoundingClientRect();
+    // 【仮】［判定の記録］ボタンの行があるときは、その行の下の端までを1画面に収める
+    const rowRect = (logRow ?? moveRow).getBoundingClientRect();
     // 目じるしを画面の上に合わせるとき、上にあける分（CSS の scroll-margin-top。8px）
     const scrollMargin = parseFloat(getComputedStyle(practiceTop).scrollMarginTop) || 0;
     const above = staffRect.top - topRect.top; // 目じるしから五線譜の枠の上端まで
@@ -921,6 +1170,19 @@
   <button class="move-button" disabled={targetIndex === notes.length - 1} onclick={() => setTarget(targetIndex + 1)} aria-label="次の音"> 次 ▶ </button>
 </div>
 
+<!-- 【仮】判定の記録を見るボタン（聴いているときだけ出す）（A線の音の判定が切れる原因を調べるため。原因がわかったら消す） -->
+<!-- うまく判定できなかったときに押すと、押した瞬間の記録（直前3秒のグラフと、直近10回の「戻る／通過」）を出す -->
+{#if isListening}
+  <div class="log-row" bind:this={logRow}>
+    <button class="log-button" onclick={openJudgeLog}>判定の記録</button>
+  </div>
+{/if}
+
+<!-- 【仮】記録の画面（開いているときだけ、画面全体に重ねて出す） -->
+{#if logSnapshot !== null}
+  <JudgeLog snapshot={logSnapshot} onclose={() => (logSnapshot = null)} />
+{/if}
+
 <!-- あまり使わない設定：ふだんはたたんでおき、「設定」を押したときだけ開く -->
 <details class="settings">
   <summary>設定</summary>
@@ -1099,6 +1361,22 @@
     display: flex;
     gap: 8px;
     margin-top: 8px;
+  }
+
+  /* 【仮】［判定の記録］ボタンの行：右寄せで、小さく出す（五線譜の高さをあまり減らさないように） */
+  .log-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
+
+  /* 【仮】［判定の記録］ボタン：灰色の枠の小さなボタン */
+  button.log-button {
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    color: #555;
+    background-color: white;
+    border: 1px solid #999;
   }
 
   /* ボタン共通：指で押しやすい大きさにする */
