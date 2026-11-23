@@ -703,17 +703,24 @@ export function findTargetIndexes(targets, position) {
 
 /**
  * 区間を選ぶときにタップした2つの音符から、区間（判定する音の並びの、始めと終わりの番号）を決める関数（ステップB）
- * 前にあるほうを始め、後ろにあるほうを終わりにする（終わりの音符を先にタップしてもよい）。
- * （区間の決め方の手直し）くり返しを展開した並びでは、同じ音符が2回以上出てくるので、
+ * （2026/11/23 変更：1回目にタップした音を始め、2回目にタップした音を終わりにする）
+ *   前は「前にあるほうを始めにして、いちばん短い区間」を選んでいたため、‖: 2〜3小節目 :‖ の楽譜で
+ *   2小節目1つ目と3小節目3つ目をタップすると、「3小節目3つ目 → くり返して2小節目1つ目」の2音だけになっていた。
+ *   タップの順番で向きを決めると、ふつうの区間も、くり返しで戻るつなぎ目だけの区間も、どちらも選べる。
+ * くり返しを展開した並びでは、同じ音符が2回以上出てくるので、
  *   「始め ≦ 終わり」になる組み合わせの中から、いちばん短い区間を選ぶ。
  *   長さが同じ区間がいくつかあるときは、前にあるほう（始めの番号が小さいほう）を選ぶ。
- *   例：‖: 4〜11小節目 :‖ の楽譜で、4小節目と7小節目をタップしたとき
- *       → 1回目の4〜7小節目だけ（前は、1回目の4小節目から2回目の7小節目まで＝4〜11→4〜7 になっていた）
+ *   例：‖: 2〜3小節目 :‖ で、2小節目1つ目 → 3小節目3つ目の順にタップ
+ *       → 1回目の2小節目1つ目から、1回目の3小節目3つ目まで
+ *   例：同じ楽譜で、3小節目3つ目 → 2小節目1つ目の順にタップ
+ *       → 1回目の3小節目3つ目から、くり返して2回目の2小節目1つ目まで（戻るつなぎ目の練習）
  *   例：10小節目と12小節目（2番かっこ）をタップしたとき
  *       → 2回目の10小節目から12小節目へ（いちばん近い道順）
+ * タップの順番どおりの向きでは区間が作れないとき（くり返しのない楽譜で、終わりの音を先にタップしたとき）は、
+ *   今までどおり、向きを入れかえて区間にする（後ろの音を先にタップしても選べるように）。
  * @param {object[]} targets - 判定する音の並び
- * @param {{measure: number, note: number}} first - 1回目にタップした音符の場所
- * @param {{measure: number, note: number}} second - 2回目にタップした音符の場所
+ * @param {{measure: number, note: number}} first - 1回目にタップした音符の場所（区間の始め）
+ * @param {{measure: number, note: number}} second - 2回目にタップした音符の場所（区間の終わり）
  * @returns {{start: number, end: number}|null} 区間の番号（0から）。どちらかが判定する音でないときは null
  */
 export function findRange(targets, first, second) {
@@ -724,29 +731,39 @@ export function findRange(targets, first, second) {
     return null;
   }
 
+  // まず、タップの順番どおり（1回目が始め、2回目が終わり）で、いちばん短い区間を探す
+  const range = findShortestRange(firstIndexes, secondIndexes);
+  if (range !== null) {
+    return range;
+  }
+
+  // タップの順番どおりでは作れないとき：向きを入れかえて探す（終わりの音を先にタップしたとき）
+  return findShortestRange(secondIndexes, firstIndexes);
+}
+
+/**
+ * 始めの候補と終わりの候補の組み合わせから、いちばん短い区間を選ぶ関数（2026/11/23 findRange から分けた）
+ * 「始め ≦ 終わり」になる組み合わせだけを使う。長さが同じなら、前にあるほう（始めの番号が小さいほう）を選ぶ。
+ * @param {number[]} startIndexes - 始めの候補（並びの何番目か）
+ * @param {number[]} endIndexes - 終わりの候補（並びの何番目か）
+ * @returns {{start: number, end: number}|null} いちばん短い区間。「始め ≦ 終わり」の組み合わせがないときは null
+ */
+function findShortestRange(startIndexes, endIndexes) {
   // いちばんよい区間（まだ見つけていないときは null）
   let best = null;
 
-  // 始めと終わりの組み合わせを全部ためす
-  // （1回目にタップした音符が始めの場合と、2回目にタップした音符が始めの場合の両方）
-  const pairs = [
-    [firstIndexes, secondIndexes],
-    [secondIndexes, firstIndexes],
-  ];
-  pairs.forEach(([startIndexes, endIndexes]) => {
-    startIndexes.forEach((start) => {
-      endIndexes.forEach((end) => {
-        // 始めが終わりより後ろになる組み合わせ（逆向き）は使わない
-        if (start > end) {
-          return;
-        }
-        // 今までの候補より短ければ、または同じ長さで前にあれば、こちらにする
-        const isShorter = best === null || end - start < best.end - best.start;
-        const isSameAndEarlier = best !== null && end - start === best.end - best.start && start < best.start;
-        if (isShorter || isSameAndEarlier) {
-          best = { start: start, end: end };
-        }
-      });
+  startIndexes.forEach((start) => {
+    endIndexes.forEach((end) => {
+      // 始めが終わりより後ろになる組み合わせ（逆向き）は使わない
+      if (start > end) {
+        return;
+      }
+      // 今までの候補より短ければ、または同じ長さで前にあれば、こちらにする
+      const isShorter = best === null || end - start < best.end - best.start;
+      const isSameAndEarlier = best !== null && end - start === best.end - best.start && start < best.start;
+      if (isShorter || isSameAndEarlier) {
+        best = { start: start, end: end };
+      }
     });
   });
 
